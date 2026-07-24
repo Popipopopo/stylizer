@@ -141,7 +141,6 @@
       <h2>presets 预设</h2>
       <div class="presets" id="preset_block" data-mode="block">
         <button data-preset="painted">柔和平涂</button>
-        <button data-preset="green">单色绿境</button>
         <button data-preset="flat">极简风景</button>
         <button data-preset="blockclean">还原</button>
       </div>
@@ -1074,8 +1073,6 @@ function syncUI(){
 const PRESETS={
   // 色块化：分别对着「柔和平涂 / 单色绿境 / 极简风景」三种参考风格
   painted:{mode2:'block',sat:118,kr:3,ks:74,kp:1,pn:12,hw:240,psrc:'auto',ma:14,cr:1,cp:1,tx:5,ts:5,tg:2},
-  green  :{mode2:'block',sat:96,kr:4,ks:88,kp:1,pn:6,hw:120,psrc:'custom',ma:20,cr:1,cp:1,tx:5,ts:6,tg:1,
-           _pal:['#17231b','#304432','#52644a','#788365','#a7aa82','#d5cfaa']},
   flat   :{mode2:'block',sat:110,kr:6,ks:95,kp:2,pn:6,hw:300,psrc:'auto',ma:48,cr:2,cp:2,tx:0,ts:5,tg:0},
   blockclean:{mode2:'block',bri:0,con:0,warm:0,sat:100,kr:4,ks:85,kp:1,pn:8,hw:220,psrc:'auto',
            ma:24,cr:1,cp:1,tx:0,ts:5,tg:0},
