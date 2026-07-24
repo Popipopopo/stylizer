@@ -1,14 +1,58 @@
 # 观测箱 · Stylizer
 
-一个纯前端的图像风格化工具：抖动（dither）、色卡（palette）、胶片颗粒、色差。上传一张图 → 拉滑杆 → 实时预览 → 导出 PNG。全程在浏览器本地跑，不上传任何图片，无第三方依赖。
+一个纯前端的图像风格化工具，两种模式：**色块化**（把照片压成一张平涂的限色插画）和**像素 / 抖动**（低分辨率 + dither 的复古像素感）。上传一张图 → 拉滑杆 → 实时预览 → 导出 PNG。全程在浏览器本地跑，不上传任何图片，无第三方依赖。
 
-A tiny client-side image degrader: dithering, palette quantization, film grain, chromatic aberration. Everything runs locally in the browser — no uploads, no dependencies.
+A client-side image stylizer with two modes: **color-block** (Kuwahara smoothing + OKLab palette quantization + region cleanup, turning a photo into a flat limited-palette illustration) and **pixel/dither** (downscale + ordered/error-diffusion dithering). Everything runs locally — no uploads, no dependencies, no build step.
 
 ## 直接用
 
 在线版：**https://popipopopo.github.io/stylizer/**
 
 也可以把 `index.html` 下载到本地，用浏览器直接打开，功能完全一样。
+
+## 色块化
+
+把照片变成参考图那种「大块纯色 + 干净边界」的插画感。管线是：
+
+```
+箱式降采样 → 调色（含彩度）→ 提取色卡 → Kuwahara 抹平 → 量化 → 形状清理 → 质感
+```
+
+几个滑杆的作用：
+
+- **抹平（Kuwahara）** —— 每个像素看周围四个重叠方窗，取方差最小那个的均值。区域内部被抹平，边界不糊反而更锐。用积分图实现，所以半径拉到 10 也不会变慢。
+- **色相分离** —— 最值得玩的一条。它决定电脑在挑色卡时，是按「什么颜色」分家，还是按「多亮多暗」分家。
+  照片的明暗差异通常远大于色相差异，不加权的话你会得到**同一个土色的 N 个深浅**（这就是"颜色不丰富"的由来）；把这条拉高，不同的色相才会各自拿到名额。
+- **最小色块 / 清理** —— 把碎屑并进相邻的大色块。「像人画的」和「像滤镜跑的」，区别很大程度上就在这一步。
+- **色块噪动** —— 只作用在色块**内部**，边界像素不动，所以轮廓始终干净。
+
+色卡可以自动提取（OKLab 空间的 k-means++），也可以点「← 收下自动色卡」把它变成可手动编辑的色卡再微调。
+
+## 像素 / 抖动
+
+- 降分辨率、亮度 / 对比度 / 冷暖 / 彩度
+- 抖动：无 / Bayer 4×4 / Bayer 8×8 / Floyd–Steinberg / Atkinson
+- 色卡量化、双色调、胶片颗粒、色差
+
+## 通用
+
+- **撤销 / 重做**：`Ctrl/⌘ + Z` 撤销，`Ctrl/⌘ + Shift + Z`（或 `Ctrl + Y`）重做。拖一次滑杆算一步，不会被拆成几十步
+- **预设**：每种模式都有内置几套；也能把当前设置存成命名预设。自动记住上次的设置
+- **导出 PNG**：Chrome / Edge 里会弹出系统保存对话框，可以自己挑文件夹；Firefox / Safari 没有这个 API，自动退回直接下载
+  导出用的就是预览那一张——同分辨率、同一份像素，**所见即所得**。想要大图就把「输出 · 分辨率」拉高
+
+## 技术
+
+单文件 HTML + Canvas 2D + 原生 JavaScript，**无构建步骤、无外部库**。
+
+图像算法放在 `<script id="algo" type="javascript/worker">` 里，运行时取出源码转成 Blob URL 起一个 Web Worker，所以拖滑杆时主线程不会卡。Worker 起不来的环境（某些浏览器的 `file://` 限制）会自动退回主线程执行，功能不变。
+
+两个值得一提的实现细节：
+
+- **渲染调度有背压。** Worker 忙的时候不再发新请求，只把最新一条压在待发位。否则拖一次滑杆会灌进几十条请求，Worker 一条条老实跑完，预览就会越拖越滞后。实测 40 次连续请求只会实发 2 条。
+- **保存对话框在点击手势里立刻发起。** 先去算图再弹窗的话，用户手势已经过期，浏览器会拒绝，然后静默退化成普通下载——文件夹就再也选不了了。
+
+所有效果都是逐像素的纯函数，想加新效果照着现有函数写一个，再挂进管线即可。
 
 ## 部署到 GitHub Pages
 
@@ -18,17 +62,3 @@ A tiny client-side image degrader: dithering, palette quantization, film grain, 
 4. 等一两分钟，访问 `https://<你的用户名>.github.io/<仓库名>/`（本仓库即 https://popipopopo.github.io/stylizer/ ）
 
 因为文件叫 `index.html` 且在根目录，这个链接会直接打开工具。
-
-## 功能
-
-- 降分辨率、亮度 / 对比度 / 冷暖调色
-- 抖动：无 / Bayer 4×4 / Bayer 8×8 / Floyd–Steinberg / Atkinson
-- 色卡：可增删改的调色板 + 预设 + 从图提取；抖动会把画面量化到色卡里的颜色
-- 双色调、胶片颗粒、色差
-- 预设：内置几套，也能把当前设置存成命名预设；自动记住上次的设置
-- 撤销 / 重做：`Ctrl/⌘ + Z` 撤销，`Ctrl/⌘ + Shift + Z`（或 `Ctrl + Y`）重做。拖一次滑杆算一步，不会被拆成几十步
-- 导出 PNG：Chrome / Edge 里会弹出系统保存对话框，可以自己挑文件夹；Firefox / Safari 没有这个 API，自动退回直接下载
-
-## 技术
-
-单文件 HTML + Canvas 2D + 原生 JavaScript，无构建步骤、无外部库。所有效果都是逐像素的纯函数，想加新效果照着现有函数写一个即可。
