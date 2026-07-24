@@ -6,14 +6,16 @@ A tiny client-side image degrader: dithering, palette quantization, film grain, 
 
 ## 直接用
 
-把 `index.html` 用浏览器打开就能用。想要一个公开链接，就部署到 GitHub Pages（见下）。
+在线版：**https://popipopopo.github.io/stylizer/**
+
+也可以把 `index.html` 下载到本地，用浏览器直接打开，功能完全一样。
 
 ## 部署到 GitHub Pages
 
 1. 新建一个仓库，把 `index.html`（和这个 README）放进去
 2. 仓库 **Settings → Pages**
 3. Source 选 **Deploy from a branch**，分支选 `main`，目录选 `/ (root)`，保存
-4. 等一两分钟，访问 `https://<你的用户名>.github.io/<仓库名>/`
+4. 等一两分钟，访问 `https://<你的用户名>.github.io/<仓库名>/`（本仓库即 https://popipopopo.github.io/stylizer/ ）
 
 因为文件叫 `index.html` 且在根目录，这个链接会直接打开工具。
 
