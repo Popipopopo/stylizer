@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>观测箱 · Stylizer</title>
+<style>
+  /* ── 设计基调：暗房 / 旧仪器面板，暖铜色作为唯一强调色 ── */
+  :root{
+    --bg:#0c0c0e; --panel:#151519; --line:#26262c;
+    --ink:#cbc8bf; --mut:#75726a; --brass:#cf9a4c; --brass-dim:#8a6a37;
+    --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font-family:var(--sans)}
+  body{display:flex;flex-direction:column}
+  header{padding:14px 20px;border-bottom:1px solid var(--line);display:flex;align-items:baseline;gap:14px}
+  header h1{font:600 15px/1 var(--mono);letter-spacing:.14em;margin:0;color:var(--ink)}
+  header h1 b{color:var(--brass);font-weight:600}
+  header .sub{font:400 11px/1 var(--mono);color:var(--mut);letter-spacing:.08em}
+  main{flex:1;display:flex;min-height:0}
+  @media(max-width:820px){main{flex-direction:column}}
+
+  /* ── 画布区 ── */
+  .stage{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;min-height:0;position:relative;
+    background:
+      radial-gradient(140% 100% at 50% 0,#141418 0,#0c0c0e 70%);}
+  #view{max-width:100%;max-height:100%;image-rendering:pixelated;
+    box-shadow:0 0 0 1px var(--line),0 24px 60px -20px #000;background:#000}
+  .drop{position:absolute;inset:24px;border:1px dashed var(--line);border-radius:4px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;
+    color:var(--mut);font:400 13px/1.5 var(--mono);text-align:center;pointer-events:none;transition:.15s}
+  .drop.hot{border-color:var(--brass);color:var(--brass)}
+  .drop b{color:var(--ink);font-weight:600}
+  .stage.has-img .drop{opacity:0}
+
+  /* ── 控制栏 ── */
+  aside{width:308px;flex:none;border-left:1px solid var(--line);background:var(--panel);
+    overflow-y:auto;padding:6px 0 24px}
+  @media(max-width:820px){aside{width:100%;border-left:0;border-top:1px solid var(--line);max-height:46vh}}
+  .grp{padding:14px 18px;border-bottom:1px solid var(--line)}
+  .grp h2{font:600 10px/1 var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--brass-dim);margin:0 0 12px}
+  .row{display:flex;align-items:center;gap:10px;margin:10px 0}
+  .row label{flex:none;width:70px;font:400 11px/1.3 var(--mono);color:var(--mut)}
+  .row output{flex:none;width:38px;text-align:right;font:400 11px/1 var(--mono);color:var(--ink)}
+  input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:2px;background:var(--line);border-radius:2px;outline:none}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;background:var(--brass);cursor:pointer;border:2px solid var(--panel)}
+  input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--brass);cursor:pointer;border:2px solid var(--panel)}
+  select{flex:1;background:#0e0e11;color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:6px 8px;font:400 12px var(--mono)}
+  .chk{display:flex;align-items:center;gap:8px;font:400 11px var(--mono);color:var(--mut);cursor:pointer}
+  .chk input{accent-color:var(--brass)}
+  .swatch{display:flex;gap:8px}
+  .swatch input[type=color]{width:34px;height:26px;padding:0;border:1px solid var(--line);border-radius:3px;background:none;cursor:pointer}
+  .presets{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .presets button{background:#0e0e11;border:1px solid var(--line);color:var(--ink);padding:8px 6px;border-radius:3px;
+    font:400 11px var(--mono);cursor:pointer;transition:.12s}
+  .presets button:hover{border-color:var(--brass-dim);color:var(--brass)}
+  .actions{display:flex;gap:10px;padding:16px 18px}
+  .actions button{flex:1;padding:10px;border-radius:3px;font:600 12px var(--mono);cursor:pointer;letter-spacing:.05em}
+  .btn-file{background:#0e0e11;border:1px solid var(--line);color:var(--ink)}
+  .btn-file:hover{border-color:var(--brass-dim)}
+  .btn-dl{background:var(--brass);border:1px solid var(--brass);color:#1a1206}
+  .btn-dl:hover{filter:brightness(1.08)}
+  .btn-dl:disabled{opacity:.4;cursor:not-allowed;filter:none}
+  .pal{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+  .chip{position:relative;width:34px;height:30px}
+  .chip input[type=color]{width:34px;height:30px;padding:0;border:1px solid var(--line);border-radius:3px;background:none;cursor:pointer}
+  .chip .rm{position:absolute;top:-6px;right:-6px;width:15px;height:15px;border-radius:50%;border:1px solid var(--line);
+    background:#0e0e11;color:var(--mut);font:700 10px/1 var(--mono);cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+  .chip .rm:hover{color:var(--brass);border-color:var(--brass-dim)}
+  .addc{width:30px;height:30px;border:1px dashed var(--line);border-radius:3px;background:none;color:var(--mut);font:400 16px/1 var(--mono);cursor:pointer}
+  .addc:hover{border-color:var(--brass);color:var(--brass)}
+  .palrow{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+  .palrow button{background:#0e0e11;border:1px solid var(--line);color:var(--ink);padding:5px 8px;border-radius:3px;font:400 11px var(--mono);cursor:pointer}
+  .palrow button:hover{border-color:var(--brass-dim);color:var(--brass)}
+  .myrow{display:flex;gap:6px;margin-top:10px;align-items:stretch}
+  .myrow select{flex:1;min-width:0}
+  .myrow button{background:#0e0e11;border:1px solid var(--line);color:var(--ink);border-radius:3px;font:400 11px var(--mono);cursor:pointer;padding:0 9px;white-space:nowrap}
+  .myrow button:hover{border-color:var(--brass-dim);color:var(--brass)}
+  .myrow button.mini{flex:none;padding:0 8px;color:var(--mut)}
+  :focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+</style>
+</head>
+<body>
+<header>
+  <h1>观测箱 · <b>STYLIZER</b></h1>
+  <span class="sub">canvas image degrader</span>
+</header>
+
+<main>
+  <div class="stage" id="stage">
+    <canvas id="view" width="16" height="16"></canvas>
+    <div class="drop" id="drop">
+      <b>拖入一张图片</b>
+      <span>或点下方「打开图片」 · 也可直接 Ctrl/⌘+V 粘贴</span>
+    </div>
+  </div>
+
+  <aside>
+    <div class="grp">
+      <h2>presets 预设</h2>
+      <div class="presets">
+        <button data-preset="onebit">1-bit 恐怖</button>
+        <button data-preset="color">彩色 posterize</button>
+        <button data-preset="gameboy">GameBoy</button>
+        <button data-preset="clean">还原</button>
+      </div>
+      <div class="myrow">
+        <select id="my_presets" aria-label="我的预设"><option value="">我的预设…</option></select>
+        <button id="preset_save" title="把当前所有设置存成一个命名预设">保存当前设置</button>
+        <button id="preset_del" class="mini" title="删除所选预设" aria-label="删除所选预设">删</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h2>resolution 分辨率</h2>
+      <div class="row"><label>像素块</label><input type="range" id="pixel" min="1" max="12" step="1" value="3"><output id="pixel_v">3</output></div>
+    </div>
+
+    <div class="grp">
+      <h2>grade 调色</h2>
+      <div class="row"><label>亮度</label><input type="range" id="bri" min="-100" max="100" value="0"><output id="bri_v">0</output></div>
+      <div class="row"><label>对比度</label><input type="range" id="con" min="-100" max="100" value="0"><output id="con_v">0</output></div>
+      <div class="row"><label>冷暖</label><input type="range" id="warm" min="-100" max="100" value="0"><output id="warm_v">0</output></div>
+    </div>
+
+    <div class="grp">
+      <h2>dither 抖动</h2>
+      <div class="row"><label>算法</label>
+        <select id="mode">
+          <option value="none">无</option>
+          <option value="bayer4">Bayer 4×4</option>
+          <option value="bayer8" selected>Bayer 8×8</option>
+          <option value="floyd">Floyd–Steinberg</option>
+          <option value="atkinson">Atkinson</option>
+        </select>
+      </div>
+      <div class="row"><label>色阶</label><input type="range" id="levels" min="2" max="8" step="1" value="4"><output id="levels_v">4</output></div>
+      <div class="row"><label>强度</label><input type="range" id="dstr" min="0" max="150" value="100"><output id="dstr_v">100</output></div>
+    </div>
+
+    <div class="grp">
+      <h2>色卡 palette</h2>
+      <label class="chk"><input type="checkbox" id="usepal"> 启用色卡（把画面量化到这些颜色）</label>
+      <div class="pal" id="pal_list" style="margin-top:12px"></div>
+      <div class="palrow">
+        <button data-pal="ink">纸与墨</button>
+        <button data-pal="amber">琥珀</button>
+        <button data-pal="bone">骨白</button>
+        <button data-pal="sick">冷绿</button>
+        <button data-pal="gb">GameBoy</button>
+        <button data-pal="onebit">1-bit</button>
+        <button id="pal_extract">从图提取</button>
+      </div>
+    </div>
+
+    <div class="grp">
+      <h2>texture 质感</h2>
+      <div class="row"><label>颗粒</label><input type="range" id="grain" min="0" max="80" value="14"><output id="grain_v">14</output></div>
+      <div class="row"><label>色差</label><input type="range" id="chrom" min="0" max="6" value="1"><output id="chrom_v">1</output></div>
+    </div>
+
+    <div class="grp">
+      <h2>duotone 双色调</h2>
+      <label class="chk"><input type="checkbox" id="duo"> 启用（按明度映射成两色 · 色卡开启时忽略）</label>
+      <div class="row" style="margin-top:12px">
+        <label>暗 / 亮</label>
+        <div class="swatch">
+          <input type="color" id="dark" value="#1a140c">
+          <input type="color" id="light" value="#e8dcc2">
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn-file" id="pick">打开图片</button>
+      <button class="btn-dl" id="dl" disabled>导出 PNG</button>
+    </div>
+    <input type="file" id="file" accept="image/*" hidden>
+  </aside>
+</main>
+
+<script>
+/* =========================================================
+   观测箱 Stylizer —— 纯 Canvas2D，逐像素处理，无任何依赖。
+   核心思路：把原图画到一个「工作画布」（降过分辨率）上，
+   取出像素数组 → 依次跑各效果函数 → 放大回显示画布。
+   每个效果都是一个独立的纯函数，想加新效果就照着写一个。
+   ========================================================= */
+
+const $ = id => document.getElementById(id);
+const view = $('view'), vctx = view.getContext('2d', {willReadFrequently:true});
+const work = document.createElement('canvas');          // 离屏工作画布
+const wctx = work.getContext('2d', {willReadFrequently:true});
+let srcImg = null;                                       // 已加载的原图
+
+// 当前所有参数
+const P = {
+  pixel:3, bri:0, con:0, warm:0,
+  mode:'bayer8', levels:4, dstr:100,
+  grain:14, chrom:1,
+  duo:false, dark:'#1a140c', light:'#e8dcc2',
+  usePal:false
+};
+
+// 色卡：当前这排颜色，以及可一键载入的几套预设
+let PAL = ['#17130d','#e7dcc4'];
+const PALSETS = {
+  ink:    ['#17130d','#e7dcc4'],
+  amber:  ['#14100a','#5c3a1e','#b07a3c','#ecdca8'],
+  bone:   ['#1a2420','#4d5f4a','#e6e2cb'],
+  sick:   ['#0c1410','#3f5a44','#cdd6bd'],
+  gb:     ['#0f380f','#306230','#8bac0f','#9bbc0f'],
+  onebit: ['#1b1b1b','#e6e6e6']
+};
+
+/* ---------- 工具函数 ---------- */
+const clamp = v => v<0?0:v>255?255:v;
+const hex2rgb = h => [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)];
+
+// 生成归一化 Bayer 阈值矩阵（size 为 2 的幂），返回二维数组，值域约 0..1
+function buildBayer(n){
+  let m=[[0]], size=1;
+  while(size<n){
+    const ns=size*2, nm=[];
+    for(let y=0;y<ns;y++){ nm[y]=[]; for(let x=0;x<ns;x++){
+      const quad = x<size ? (y<size?0:3) : (y<size?2:1);   // 标准 Bayer 递归象限
+      nm[y][x] = 4*m[y%size][x%size] + quad;
+    }}
+    m=nm; size=ns;
+  }
+  const d=n*n;
+  return m.map(r=>r.map(v=>(v+0.5)/d));
+}
+const BAYER4 = buildBayer(4), BAYER8 = buildBayer(8);
+
+// 把单通道值量化到 levels 级
+const quant = (v,l) => Math.round(clamp(v)/255*(l-1))/(l-1)*255;
+
+// 在色卡里找离 (r,g,b) 最近的颜色，返回 [r,g,b]
+function nearest(r,g,b,pal){
+  let bi=0,bd=Infinity;
+  for(let i=0;i<pal.length;i++){
+    const p=pal[i], dr=r-p[0], dg=g-p[1], db=b-p[2], d=dr*dr+dg*dg+db*db;
+    if(d<bd){bd=d;bi=i;}
+  }
+  return pal[bi];
+}
+
+/* ---------- 效果一：亮度 / 对比度 ---------- */
+function grade(d,bri,con){
+  const cf = (259*(con+255))/(255*(259-con));            // 经典对比度系数
+  for(let i=0;i<d.length;i+=4){
+    for(let c=0;c<3;c++) d[i+c] = clamp(cf*(d[i+c]-128)+128 + bri);
+  }
+}
+/* ---------- 效果二：冷暖偏移 ---------- */
+function warmth(d,w){
+  const k=w*0.45;
+  for(let i=0;i<d.length;i+=4){ d[i]=clamp(d[i]+k); d[i+2]=clamp(d[i+2]-k); }
+}
+/* ---------- 效果三：胶片颗粒（亮度噪点） ---------- */
+function grain(d,amt){
+  if(!amt) return;
+  for(let i=0;i<d.length;i+=4){
+    const n=(Math.random()-0.5)*amt;
+    d[i]=clamp(d[i]+n); d[i+1]=clamp(d[i+1]+n); d[i+2]=clamp(d[i+2]+n);
+  }
+}
+/* ---------- 效果四：抖动 + 量化（可选：量化到色卡 pal） ---------- */
+function dither(img,mode,levels,strength,pal){
+  const {data,width:w,height:h}=img, s=strength/100;
+  const usePal = pal && pal.length>0;
+  // 单像素量化器：有色卡就找最近色，没有就按色阶逐通道量化
+  const step = usePal ? 255/pal.length : 0;             // 色卡时抖动偏移的大致幅度
+
+  if(mode==='none'){
+    for(let i=0;i<data.length;i+=4){
+      if(usePal){ const c=nearest(data[i],data[i+1],data[i+2],pal); data[i]=c[0];data[i+1]=c[1];data[i+2]=c[2]; }
+      else for(let c=0;c<3;c++) data[i+c]=quant(data[i+c],levels);
+    }
+    return;
+  }
+  if(mode==='bayer4'||mode==='bayer8'){                  // 有序抖动：加阈值再量化
+    const M = mode==='bayer8'?BAYER8:BAYER4, N=M.length, st = usePal?step:255/(levels-1);
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      const i=(y*w+x)*4, off=(M[y%N][x%N]-0.5)*st*s;
+      if(usePal){ const c=nearest(data[i]+off,data[i+1]+off,data[i+2]+off,pal); data[i]=c[0];data[i+1]=c[1];data[i+2]=c[2]; }
+      else for(let c=0;c<3;c++) data[i+c]=quant(data[i+c]+off,levels);
+    }
+    return;
+  }
+  // 误差扩散（Floyd–Steinberg / Atkinson）：在浮点缓冲里跑，误差推给邻居
+  const buf=new Float32Array(w*h*3);
+  for(let p=0,i=0;p<w*h;p++,i+=4){ buf[p*3]=data[i]; buf[p*3+1]=data[i+1]; buf[p*3+2]=data[i+2]; }
+  const W = mode==='atkinson'
+    ? [[1,0,1/8],[2,0,1/8],[-1,1,1/8],[0,1,1/8],[1,1,1/8],[0,2,1/8]]
+    : [[1,0,7/16],[-1,1,3/16],[0,1,5/16],[1,1,1/16]];
+  const push=(x,y,c,err)=>{ for(const [dx,dy,f] of W){ const nx=x+dx,ny=y+dy;
+    if(nx>=0&&nx<w&&ny<h) buf[((ny*w+nx)*3)+c]+=err*f; } };
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const p=(y*w+x)*3;
+    if(usePal){                                          // 整像素找最近色，误差按通道扩散
+      const c=nearest(buf[p],buf[p+1],buf[p+2],pal);
+      for(let ch=0;ch<3;ch++){ const err=(buf[p+ch]-c[ch])*s; buf[p+ch]=c[ch]; push(x,y,ch,err); }
+    }else{
+      for(let ch=0;ch<3;ch++){ const old=buf[p+ch], nv=quant(old,levels), err=(old-nv)*s; buf[p+ch]=nv; push(x,y,ch,err); }
+    }
+  }
+  for(let p=0,i=0;p<w*h;p++,i+=4){ data[i]=clamp(buf[p*3]); data[i+1]=clamp(buf[p*3+1]); data[i+2]=clamp(buf[p*3+2]); }
+}
+/* ---------- 效果五：双色调（按明度映射到暗/亮两色） ---------- */
+function duotone(d,dark,light){
+  const [dr,dg,db]=hex2rgb(dark), [lr,lg,lb]=hex2rgb(light);
+  for(let i=0;i<d.length;i+=4){
+    const L=(0.299*d[i]+0.587*d[i+1]+0.114*d[i+2])/255;
+    d[i]=dr+(lr-dr)*L; d[i+1]=dg+(lg-dg)*L; d[i+2]=db+(lb-db)*L;
+  }
+}
+/* ---------- 效果六：色差（水平错开 R / B 通道） ---------- */
+function chroma(img,px){
+  if(!px) return;
+  const {data,width:w,height:h}=img, src=data.slice();
+  const sample=(x,y,c)=>{ x=x<0?0:x>=w?w-1:x; return src[(y*w+x)*4+c]; };
+  for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+    const i=(y*w+x)*4;
+    data[i]  =sample(x-px,y,0);   // 红往左
+    data[i+2]=sample(x+px,y,2);   // 蓝往右  → 边缘出现青/红镶边
+  }
+}
+
+/* ---------- 主渲染管线 ---------- */
+function render(){
+  if(!srcImg) return;
+  // 1. 按「像素块」把原图缩小到工作分辨率（大图自动限制在 700px 内）
+  let sc=P.pixel, ww=Math.round(srcImg.width/sc);
+  if(ww>700){ sc=srcImg.width/700; ww=700; }
+  const wh=Math.max(1,Math.round(srcImg.height/sc));
+  work.width=ww; work.height=wh;
+  wctx.imageSmoothingEnabled=true;
+  wctx.drawImage(srcImg,0,0,ww,wh);
+
+  const img=wctx.getImageData(0,0,ww,wh), d=img.data;
+  const pal = P.usePal ? PAL.map(hex2rgb) : null;        // 色卡开启时把画面量化到这些颜色
+  // 2~7. 依次跑效果
+  grade(d,P.bri,P.con);
+  warmth(d,P.warm);
+  grain(d,P.grain);
+  dither(img,P.mode,P.levels,P.dstr,pal);
+  if(P.duo && !P.usePal) duotone(d,P.dark,P.light);      // 色卡优先，此时跳过双色调
+  chroma(img,P.chrom);
+
+  // 8. 放大回显示（关掉平滑 → 硬像素）
+  view.width=ww; view.height=wh;
+  vctx.putImageData(img,0,0);
+  view.style.width = Math.min(ww*P.pixel, 1200) + 'px';
+  $('dl').disabled=false;
+  saveLast();                                            // 自动记住这次的设置
+}
+
+/* ---------- 导出：把工作画布按像素块放大后下载 ---------- */
+function saveCanvas(cnv){
+  // 先试 toBlob（省内存）；失败或返回空就退回 toDataURL；再不行就提示
+  const trigger=url=>{ const a=document.createElement('a');
+    a.href=url; a.download='stylized.png'; document.body.appendChild(a); a.click(); a.remove(); };
+  try{
+    cnv.toBlob(b=>{
+      if(!b){ try{ trigger(cnv.toDataURL('image/png')); }catch(e){ alert('导出失败：图片太大了，把「像素块」调小一点再试。'); } return; }
+      const url=URL.createObjectURL(b); trigger(url);
+      setTimeout(()=>URL.revokeObjectURL(url),1000);
+    },'image/png');
+  }catch(e){
+    try{ trigger(cnv.toDataURL('image/png')); }catch(e2){ alert('导出失败：图片太大了，把「像素块」调小一点再试。'); }
+  }
+}
+function download(){
+  if(!srcImg) return;
+  const MAX=4096;                                        // 每边像素上限，避免超出浏览器画布上限而崩掉
+  let scale=Math.min(P.pixel, MAX/view.width, MAX/view.height);
+  scale=Math.max(1,Math.floor(scale));                  // 至少 1 倍，且取整保持硬像素
+  const out=document.createElement('canvas');
+  out.width=view.width*scale; out.height=view.height*scale;
+  const octx=out.getContext('2d');
+  octx.imageSmoothingEnabled=false;
+  octx.drawImage(view,0,0,out.width,out.height);
+  saveCanvas(out);
+}
+
+/* ---------- 图片加载 ---------- */
+function loadFromSrc(src){
+  const im=new Image();
+  im.onload=()=>{ srcImg=im; $('stage').classList.add('has-img'); render(); };
+  im.src=src;
+}
+function loadFromFile(f){
+  if(!f||!f.type.startsWith('image/')) return;
+  const r=new FileReader(); r.onload=e=>loadFromSrc(e.target.result); r.readAsDataURL(f);
+}
+
+/* ---------- 绑定所有控件 ---------- */
+const bindRange=(id,key)=>{ const el=$(id),out=$(id+'_v');
+  el.addEventListener('input',()=>{ P[key]=+el.value; if(out)out.textContent=el.value; render(); }); };
+['pixel','bri','con','warm','levels','dstr','grain','chrom'].forEach(id=>{
+  const key=({pixel:'pixel',bri:'bri',con:'con',warm:'warm',levels:'levels',dstr:'dstr',grain:'grain',chrom:'chrom'})[id];
+  bindRange(id,key);
+});
+$('mode').addEventListener('change',e=>{P.mode=e.target.value;render();});
+$('duo').addEventListener('change',e=>{P.duo=e.target.checked;render();});
+$('dark').addEventListener('input',e=>{P.dark=e.target.value;render();});
+$('light').addEventListener('input',e=>{P.light=e.target.value;render();});
+
+/* ---------- 色卡：把 PAL 数组画成一排可编辑色块 ---------- */
+const toHex = v => '#'+[v[0],v[1],v[2]].map(n=>Math.round(n).toString(16).padStart(2,'0')).join('');
+function renderPalette(){
+  const box=$('pal_list'); box.innerHTML='';
+  PAL.forEach((hex,idx)=>{
+    const chip=document.createElement('div'); chip.className='chip';
+    const inp=document.createElement('input'); inp.type='color'; inp.value=hex; inp.title='点开改颜色';
+    inp.addEventListener('input',()=>{ PAL[idx]=inp.value; if(P.usePal)render(); });
+    const rm=document.createElement('button'); rm.className='rm'; rm.textContent='×'; rm.title='删除';
+    rm.setAttribute('aria-label','删除颜色');
+    rm.addEventListener('click',()=>{ if(PAL.length>2){ PAL.splice(idx,1); renderPalette(); if(P.usePal)render(); } });
+    chip.append(inp,rm); box.append(chip);
+  });
+  const add=document.createElement('button'); add.className='addc'; add.textContent='+'; add.title='加一色';
+  add.setAttribute('aria-label','添加颜色');
+  add.addEventListener('click',()=>{ if(PAL.length<12){ PAL.push('#888888'); renderPalette(); if(P.usePal)render(); } });
+  box.append(add);
+}
+// 从当前图里吸出一套色卡：缩到 64px、量化归并、按出现频率取有区分度的几色
+function extractPalette(n){
+  if(!srcImg) return;
+  const c=document.createElement('canvas'); c.width=64; c.height=64;
+  c.getContext('2d').drawImage(srcImg,0,0,64,64);
+  const d=c.getContext('2d').getImageData(0,0,64,64).data, map=new Map();
+  for(let i=0;i<d.length;i+=4){ const k=((d[i]&0xf0)<<16)|((d[i+1]&0xf0)<<8)|(d[i+2]&0xf0); map.set(k,(map.get(k)||0)+1); }
+  const sorted=[...map.entries()].sort((a,b)=>b[1]-a[1]), picked=[];
+  for(const [k] of sorted){ const r=(k>>16)&255,g=(k>>8)&255,b=k&255;
+    if(picked.every(p=>{const dr=r-p[0],dg=g-p[1],db=b-p[2];return dr*dr+dg*dg+db*db>1500;})){ picked.push([r,g,b]); if(picked.length>=n)break; } }
+  if(picked.length<2){ picked.push([20,20,20],[230,230,230]); }
+  picked.sort((a,b)=>(0.299*a[0]+0.587*a[1]+0.114*a[2])-(0.299*b[0]+0.587*b[1]+0.114*b[2]));
+  PAL=picked.map(toHex); renderPalette();
+}
+$('usepal').addEventListener('change',e=>{P.usePal=e.target.checked;render();});
+document.querySelectorAll('.palrow button[data-pal]').forEach(b=>b.addEventListener('click',()=>{
+  PAL=PALSETS[b.dataset.pal].slice(); renderPalette();
+  P.usePal=true; $('usepal').checked=true; render();
+}));
+$('pal_extract').addEventListener('click',()=>{
+  extractPalette(5); P.usePal=true; $('usepal').checked=true; render();
+});
+renderPalette();
+
+$('pick').addEventListener('click',()=>$('file').click());
+$('file').addEventListener('change',e=>loadFromFile(e.target.files[0]));
+$('dl').addEventListener('click',download);
+
+// 拖拽 + 粘贴
+const drop=$('drop'), stage=$('stage');
+['dragenter','dragover'].forEach(ev=>stage.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hot');}));
+['dragleave','drop'].forEach(ev=>stage.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
+stage.addEventListener('drop',e=>loadFromFile(e.dataTransfer.files[0]));
+window.addEventListener('paste',e=>{ for(const it of e.clipboardData.items) if(it.type.startsWith('image/')) loadFromFile(it.getAsFile()); });
+
+/* ---------- 把 P + 色卡 的当前值写回所有控件 ---------- */
+function syncUI(){
+  ['pixel','bri','con','warm','levels','dstr','grain','chrom'].forEach(id=>{
+    $(id).value=P[id]; const o=$(id+'_v'); if(o)o.textContent=P[id];
+  });
+  $('mode').value=P.mode;
+  $('duo').checked=P.duo; if(P.dark)$('dark').value=P.dark; if(P.light)$('light').value=P.light;
+  $('usepal').checked=P.usePal;
+  renderPalette();
+}
+
+/* ---------- 内置预设：设一组参数再同步 UI ---------- */
+const PRESETS={
+  onebit:{pixel:3,bri:6,con:20,warm:10,mode:'bayer8',levels:2,dstr:100,grain:10,chrom:1,duo:true,dark:'#141017',light:'#e7dcc4'},
+  color :{pixel:2,bri:0,con:10,warm:6,mode:'floyd',levels:5,dstr:100,grain:18,chrom:2,duo:false},
+  gameboy:{pixel:3,bri:0,con:16,warm:0,mode:'bayer4',levels:2,dstr:100,grain:6,chrom:0,duo:true,dark:'#0f380f',light:'#9bbc0f'},
+  clean :{pixel:1,bri:0,con:0,warm:0,mode:'none',levels:8,dstr:100,grain:0,chrom:0,duo:false}
+};
+function applyPreset(name){
+  Object.assign(P,PRESETS[name]);
+  P.usePal=false;                                        // 顶部预设走色阶/双色调，先关掉色卡
+  syncUI(); render();
+}
+document.querySelectorAll('.presets button').forEach(b=>b.addEventListener('click',()=>applyPreset(b.dataset.preset)));
+
+/* =========================================================
+   复用层：① 自动记住上次设置 ② 命名预设库
+   都存在浏览器 localStorage 里。用 try/catch 包住——
+   在受限沙盒（如预览窗口）里存不住也不会报错，传到网站上就正常。
+   ========================================================= */
+const LS_LAST='mirage.stylizer.last', LS_PRESETS='mirage.stylizer.presets';
+
+// 当前完整状态快照（含色卡），可 JSON 序列化
+const snapshot = () => Object.assign({}, P, {PAL:PAL.slice()});
+// 把一份状态套回来
+function applyState(s){
+  const {PAL:pal,...rest}=s;
+  Object.assign(P,rest);
+  if(Array.isArray(pal)) PAL=pal.slice();
+  syncUI(); render();
+}
+// ① 自动记住：render 时防抖写入
+let saveT;
+function saveLast(){ clearTimeout(saveT); saveT=setTimeout(()=>{
+  try{ localStorage.setItem(LS_LAST, JSON.stringify(snapshot())); }catch(e){} },300); }
+
+// ② 命名预设库
+const getPresets = () => { try{ return JSON.parse(localStorage.getItem(LS_PRESETS))||[]; }catch(e){ return []; } };
+function refreshPresetList(sel){
+  const dd=$('my_presets'); dd.innerHTML='<option value="">我的预设…</option>';
+  getPresets().forEach((p,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=p.name; dd.append(o); });
+  if(sel!=null) dd.value=sel;
+}
+function savePreset(){
+  const name=(prompt('给这套设置起个名：','我的风格')||'').trim();
+  if(!name) return;
+  const list=getPresets(); list.push({name, s:snapshot()});
+  try{ localStorage.setItem(LS_PRESETS, JSON.stringify(list)); }catch(e){ alert('保存失败：浏览器不允许本地存储（可能是预览窗口）。传到网站上就能存了。'); return; }
+  refreshPresetList(String(list.length-1));
+}
+function deletePreset(){
+  const dd=$('my_presets'), i=dd.value; if(i==='') return;
+  const list=getPresets(); const p=list[+i];
+  if(!confirm('删除预设「'+p.name+'」？')) return;
+  list.splice(+i,1);
+  try{ localStorage.setItem(LS_PRESETS, JSON.stringify(list)); }catch(e){}
+  refreshPresetList();
+}
+$('preset_save').addEventListener('click',savePreset);
+$('preset_del').addEventListener('click',deletePreset);
+$('my_presets').addEventListener('change',e=>{ const i=e.target.value; if(i!=='') applyState(getPresets()[+i].s); });
+
+/* ---------- 初始化：先恢复上次设置，再载入演示图 ---------- */
+(function restore(){
+  try{ const raw=localStorage.getItem(LS_LAST);
+    if(raw){ const s=JSON.parse(raw); const {PAL:pal,...rest}=s; Object.assign(P,rest); if(Array.isArray(pal))PAL=pal.slice(); }
+  }catch(e){}
+  refreshPresetList(); syncUI();
+})();
+
+/* ---------- 开局放一张演示渐变，方便立刻看到效果 ---------- */
+(function demo(){
+  const c=document.createElement('canvas'); c.width=480; c.height=320;
+  const g=c.getContext('2d');
+  const grd=g.createLinearGradient(0,0,480,320);
+  grd.addColorStop(0,'#efe6d2'); grd.addColorStop(.5,'#b98a5a'); grd.addColorStop(1,'#241a12');
+  g.fillStyle=grd; g.fillRect(0,0,480,320);
+  g.fillStyle='rgba(20,14,8,.85)';
+  g.beginPath(); g.arc(300,150,90,0,7); g.fill();
+  loadFromSrc(c.toDataURL());
+})();
+</script>
+</body>
+</html>
