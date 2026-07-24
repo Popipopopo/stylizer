@@ -187,6 +187,15 @@
           <option value="custom">用下方色卡</option>
         </select>
       </div>
+      <div class="row"><label>映射方式</label>
+        <select id="pmap">
+          <option value="near">按最近色 · 忠实</option>
+          <option value="rank">按明暗排序 · 换调子</option>
+        </select>
+      </div>
+      <p class="hint">套用别人的色卡时选「按明暗排序」——它把色卡按明暗排队，
+原图的明暗也切成同样多档对上去，强制用满整套颜色，像得多。
+用自动提取的色卡时留在「最近色」，那样才保得住画面本来的颜色关系。</p>
       <div class="autopal" id="autopal" title="当前自动提取出来的颜色"></div>
     </div>
 
@@ -264,7 +273,10 @@
         <button data-pal="gb">GameBoy</button>
         <button data-pal="onebit">1-bit</button>
         <button id="pal_grab">← 收下自动色卡</button>
+        <button id="pal_ref">从参考图取色…</button>
       </div>
+      <p class="hint">「从参考图取色」可以传任意一张图（电影截图、画作、老游戏截图）只借它的颜色。
+如果那张图本身颜色就少（比如 16 色的游戏截图），会原样照抄，不做近似。</p>
     </div>
 
     <div class="actions">
@@ -272,6 +284,7 @@
       <button class="btn-dl" id="dl" disabled>导出 PNG</button>
     </div>
     <input type="file" id="file" accept="image/*" hidden>
+    <input type="file" id="reffile" accept="image/*" hidden>
   </aside>
 </main>
 
@@ -402,6 +415,24 @@ function histogram(img){
   return cols;
 }
 
+/* ================= 数一数到底有几种颜色 =================
+   游戏截图、像素画这类图往往正好只有十几个颜色。
+   对这种图跑 k-means 去「近似」它是错的——应该原样照抄。
+   注意必须在【原图】上数：缩放会把相邻色混出新颜色，一缩就不准了。
+   超过 limit 就提前返回 null，照片几百个像素内就会触发，很快。 */
+function exactColors(img,limit){
+  const d=img.data, seen=new Map();
+  for(let i=0;i<d.length;i+=4){
+    if(d[i+3]<16) continue;
+    const key=(d[i]<<16)|(d[i+1]<<8)|d[i+2];
+    seen.set(key,(seen.get(key)||0)+1);
+    if(seen.size>limit) return null;
+  }
+  if(!seen.size) return null;
+  return [...seen.entries()].sort((a,b)=>b[1]-a[1])
+    .map(e=>[(e[0]>>16)&255,(e[0]>>8)&255,e[0]&255]);
+}
+
 /* ================= 提取色卡（k-means++，色相加权） =================
    hueWeight 是关键：在 OKLab 里给 a/b 两个色度轴加权。
    照片的明暗方差通常远大于色相方差，一视同仁的话
@@ -509,6 +540,41 @@ function quantize(img,pal){
       lut[key]=idx;
     }
     labels[p]=idx;
+  }
+  return labels;
+}
+
+/* ================= 按明暗排序映射 =================
+   偷来的色卡如果直接按「最近色」套，常常会翻车：
+   参考图偏暗、原图偏亮的话，绝大多数像素会挤到色卡里那两三个亮色上，
+   剩下那些好看的暗色一个都用不上，出来完全不像参考图。
+   问题不在颜色本身，在于明暗分布对不上。
+
+   所以这里换个思路：色卡按明度排好队，原图的明暗范围也切成同样多档，
+   第 i 档配第 i 个颜色。等于 Photoshop 的「渐变映射」——
+   强制把整套色卡用满，"变成那个调子"的效果就是这么来的。
+   取 2%~98% 分位来定范围，免得个别死黑/死白像素把整个范围撑坏。 */
+function quantizeRank(img,pal){
+  const order=pal.map((p,i)=>({i:i,L:rgb2lab(p[0],p[1],p[2])[0]}))
+                 .sort((a,b)=>a.L-b.L);
+  const d=img.data, n=img.w*img.h, hist=new Int32Array(256);
+  for(let p=0;p<n;p++){
+    const i=p*4;
+    hist[(0.2126*d[i]+0.7152*d[i+1]+0.0722*d[i+2])|0]++;
+  }
+  const cut=n*0.02;
+  let lo=0, hi=255, acc=0;
+  for(let v=0;v<256;v++){ acc+=hist[v]; if(acc>=cut){ lo=v; break; } }
+  acc=0;
+  for(let v=255;v>=0;v--){ acc+=hist[v]; if(acc>=cut){ hi=v; break; } }
+  if(hi<=lo){ lo=0; hi=255; }
+  const N=pal.length, span=hi-lo, labels=new Uint16Array(n);
+  for(let p=0;p<n;p++){
+    const i=p*4;
+    const L=0.2126*d[i]+0.7152*d[i+1]+0.0722*d[i+2];
+    let t=(L-lo)/span; t=t<0?0:t>1?1:t;
+    let k=(t*N)|0; if(k>=N) k=N-1;
+    labels[p]=order[k].i;
   }
   return labels;
 }
@@ -729,8 +795,11 @@ function runBlock(P,PAL,maxDim){
     CACHE.smooth={k:kSmooth, v:kuwahara({w:w,h:h,data:CACHE.grade.v.data.slice()},P.kr,P.ks,P.kp)};
   }
 
-  const kQuant=K([kSmooth,kPal]);
-  if(!CACHE.quant||CACHE.quant.k!==kQuant) CACHE.quant={k:kQuant,v:quantize(CACHE.smooth.v,pal)};
+  const kQuant=K([kSmooth,kPal,P.pmap]);
+  if(!CACHE.quant||CACHE.quant.k!==kQuant){
+    CACHE.quant={k:kQuant, v: P.pmap==='rank' ? quantizeRank(CACHE.smooth.v,pal)
+                                              : quantize(CACHE.smooth.v,pal)};
+  }
 
   const kClean=K([kQuant,P.ma,P.cr,P.cp]);
   if(!CACHE.clean||CACHE.clean.k!==kClean){
@@ -762,6 +831,21 @@ function handleRequest(msg){
     SRC={w:msg.w,h:msg.h,data:new Uint8ClampedArray(msg.data)};
     for(const k in CACHE) delete CACHE[k];
     return {msg:{type:'loaded'}};
+  }
+  // 从参考图取色：只借它的颜色，不碰正在处理的主图，也不动缓存
+  if(msg.type==='sample'){
+    const ref={w:msg.w,h:msg.h,data:new Uint8ClampedArray(msg.data)};
+    const exact=exactColors(ref,msg.limit);
+    let pal, how;
+    if(exact){ pal=exact; how='exact'; }
+    else{
+      const sc=Math.min(1,320/Math.max(ref.w,ref.h));
+      pal=extractPalette(histogram(resize(ref,Math.max(1,Math.round(ref.w*sc)),
+                                              Math.max(1,Math.round(ref.h*sc)))),msg.n,msg.hw);
+      how='cluster';
+    }
+    pal.sort((a,b)=>rgb2lab(a[0],a[1],a[2])[0]-rgb2lab(b[0],b[1],b[2])[0]);
+    return {msg:{type:'sampled', pal:pal, how:how}};
   }
   if(!SRC) return {msg:{type:'error',id:msg.id,error:'没有已加载的图片'}};
   const t0=(typeof performance!=='undefined'?performance.now():Date.now());
@@ -803,7 +887,7 @@ const P={
   bri:0, con:0, warm:0, sat:100,
   // 色块化
   kr:4, ks:85, kp:1,
-  pn:8, hw:220, psrc:'auto',
+  pn:8, hw:220, psrc:'auto', pmap:'near',
   ma:24, cr:1, cp:1,
   tx:0, ts:5, tg:0,
   wr:1000,
@@ -884,6 +968,22 @@ function scheduleFinal(){
 function onResult(m){
   if(m.type==='loaded'){ busy=false; pending=null; scheduleFinal(); return; }
   if(m.type==='error'){ busy=false; $('meter').textContent=m.error; return; }
+  // 取色不占渲染的位子，所以这里不能碰 busy，否则背压闸门会被放掉
+  if(m.type==='sampled'){
+    if(!m.pal||!m.pal.length){ flash('没能从这张图里取到颜色'); return; }
+    PAL=m.pal.map(toHex); renderPalette();
+    if(P.mode2==='block'){
+      P.psrc='custom'; $('psrc').value='custom';
+      P.pmap='rank';   $('pmap').value='rank';        // 借来的色卡默认走明暗排序
+    }else{
+      P.usePal=true; $('usepal').checked=true;
+    }
+    scheduleFinal();
+    flash(m.how==='exact'
+      ? '原样取到 '+PAL.length+' 色（这张图本来就是限色的）'
+      : '聚类取到 '+PAL.length+' 色');
+    return;
+  }
   busy=false;
   const px=new Uint8ClampedArray(m.data);
   view.width=m.w; view.height=m.h;
@@ -934,6 +1034,7 @@ const bindRange=(id,key)=>{
 
 $('mode').addEventListener('change',e=>{P.mode=e.target.value;scheduleFinal();});
 $('psrc').addEventListener('change',e=>{P.psrc=e.target.value;scheduleFinal();});
+$('pmap').addEventListener('change',e=>{P.pmap=e.target.value;scheduleFinal();});
 $('duo').addEventListener('change',e=>{P.duo=e.target.checked;scheduleFinal();});
 $('dark').addEventListener('input',e=>{P.dark=e.target.value;schedule();});
 $('light').addEventListener('input',e=>{P.light=e.target.value;schedule();});
@@ -986,6 +1087,29 @@ $('pal_grab').addEventListener('click',()=>{
   P.psrc='custom'; $('psrc').value='custom';
   scheduleFinal(); flash('已收下 '+PAL.length+' 色，现在可以手动改了');
 });
+/* 从参考图取色：只借颜色，不替换正在处理的主图。
+   缩放用最近邻（imageSmoothingEnabled=false）——双线性会把相邻色混出新颜色，
+   16 色的截图一缩就变成几千色，"原样照抄"那条判断就废了。 */
+$('pal_ref').addEventListener('click',()=>$('reffile').click());
+$('reffile').addEventListener('change',async e=>{
+  const f=e.target.files[0]; e.target.value='';
+  if(!f||!f.type.startsWith('image/')) return;
+  try{
+    const bmp=await createImageBitmap(f);
+    const sc=Math.min(1,2000/Math.max(bmp.width,bmp.height));
+    const c=document.createElement('canvas');
+    c.width=Math.max(1,Math.round(bmp.width*sc));
+    c.height=Math.max(1,Math.round(bmp.height*sc));
+    const cx=c.getContext('2d',{willReadFrequently:true});
+    cx.imageSmoothingEnabled=false;
+    cx.drawImage(bmp,0,0,c.width,c.height);
+    bmp.close();
+    const buf=cx.getImageData(0,0,c.width,c.height).data.buffer.slice(0);
+    flash('正在从参考图取色…');
+    send({type:'sample', w:c.width, h:c.height, data:buf, n:P.pn, hw:P.hw, limit:24}, buf);
+  }catch(err){ flash('这张参考图读不出来'); }
+});
+
 document.querySelectorAll('.palrow button[data-pal]').forEach(b=>b.addEventListener('click',()=>{
   PAL=PALSETS[b.dataset.pal].slice(); renderPalette();
   if(P.mode2==='block'){ P.psrc='custom'; $('psrc').value='custom'; }
@@ -1063,7 +1187,7 @@ function syncUI(){
    'pixel','levels','dstr','grain','chrom'].forEach(id=>{
     if($(id)){ $(id).value=P[id]; const o=$(id+'_v'); if(o)o.textContent=P[id]; }
   });
-  $('mode').value=P.mode; $('psrc').value=P.psrc;
+  $('mode').value=P.mode; $('psrc').value=P.psrc; $('pmap').value=P.pmap;
   $('duo').checked=P.duo; if(P.dark)$('dark').value=P.dark; if(P.light)$('light').value=P.light;
   $('usepal').checked=P.usePal;
   applyMode(); renderPalette(); renderAutoPal();
@@ -1075,7 +1199,7 @@ const PRESETS={
   painted:{mode2:'block',sat:118,kr:3,ks:74,kp:1,pn:12,hw:240,psrc:'auto',ma:14,cr:1,cp:1,tx:5,ts:5,tg:2},
   flat   :{mode2:'block',sat:110,kr:6,ks:95,kp:2,pn:6,hw:300,psrc:'auto',ma:48,cr:2,cp:2,tx:0,ts:5,tg:0},
   blockclean:{mode2:'block',bri:0,con:0,warm:0,sat:100,kr:4,ks:85,kp:1,pn:8,hw:220,psrc:'auto',
-           ma:24,cr:1,cp:1,tx:0,ts:5,tg:0},
+           pmap:'near',ma:24,cr:1,cp:1,tx:0,ts:5,tg:0},
   // 像素 / 抖动
   onebit :{mode2:'pixel',pixel:3,bri:6,con:20,warm:10,mode:'bayer8',levels:2,dstr:100,grain:10,chrom:1,duo:true,dark:'#141017',light:'#e7dcc4'},
   color  :{mode2:'pixel',pixel:2,bri:0,con:10,warm:6,mode:'floyd',levels:5,dstr:100,grain:18,chrom:2,duo:false},
