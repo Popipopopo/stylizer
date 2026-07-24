@@ -215,12 +215,6 @@
       <p class="hint">只作用在色块内部，边界不动，所以轮廓保持干净。</p>
     </div>
 
-    <div class="grp" data-mode="block">
-      <h2>output 输出</h2>
-      <div class="row"><label>分辨率</label><input type="range" id="wr" min="400" max="2000" step="50" value="1000"><output id="wr_v">1000</output></div>
-      <p class="hint">预览和导出用的是同一个分辨率，所见即所得。想要大图就把这条拉高。</p>
-    </div>
-
     <!-- ══════════ 像素 / 抖动 ══════════ -->
     <div class="grp hide" data-mode="pixel">
       <h2>resolution 分辨率</h2>
@@ -258,6 +252,23 @@
           <input type="color" id="light" value="#e8dcc2">
         </div>
       </div>
+    </div>
+
+    <!-- 输出：两个模式共用 -->
+    <div class="grp">
+      <h2>output 输出</h2>
+      <div class="row" data-mode="block"><label>分辨率</label><input type="range" id="wr" min="400" max="2000" step="50" value="1000"><output id="wr_v">1000</output></div>
+      <div class="row"><label>导出倍数</label>
+        <select id="ex">
+          <option value="1">1× · 原尺寸</option>
+          <option value="2">2×</option>
+          <option value="3">3×</option>
+          <option value="4">4×</option>
+          <option value="6">6×</option>
+          <option value="8">8×</option>
+        </select>
+      </div>
+      <p class="hint" id="exhint"></p>
     </div>
 
     <!-- 色卡：两个模式共用 -->
@@ -890,7 +901,7 @@ const P={
   pn:8, hw:220, psrc:'auto', pmap:'near',
   ma:24, cr:1, cp:1,
   tx:0, ts:5, tg:0,
-  wr:1000,
+  wr:1000, ex:1,
   // 像素 / 抖动
   pixel:3, mode:'bayer8', levels:4, dstr:100,
   grain:14, chrom:1,
@@ -990,7 +1001,7 @@ function onResult(m){
   view.classList.toggle('pixelated', P.mode2==='pixel');
   vctx.putImageData(new ImageData(px,m.w,m.h),0,0);
   view.style.width = P.mode2==='pixel' ? Math.min(m.w*P.pixel,1200)+'px' : '';
-  if(m.quality==='final'){ lastFinal={w:m.w,h:m.h,data:px}; }
+  if(m.quality==='final'){ lastFinal={w:m.w,h:m.h,data:px}; updateExHint(); }
   if(m.auto){ AUTOPAL=m.auto.map(toHex); renderAutoPal(); }
   $('meter').innerHTML=`<b>${m.w}×${m.h}</b>  ${Math.round(m.ms)}ms  `
     + (m.quality==='draft'?'草稿':'定稿') + `  色卡 ${m.pal.length||'—'}`;
@@ -1035,6 +1046,8 @@ const bindRange=(id,key)=>{
 $('mode').addEventListener('change',e=>{P.mode=e.target.value;scheduleFinal();});
 $('psrc').addEventListener('change',e=>{P.psrc=e.target.value;scheduleFinal();});
 $('pmap').addEventListener('change',e=>{P.pmap=e.target.value;scheduleFinal();});
+// 导出倍数不影响预览，所以不用重渲染，只更新提示 + 记一条历史
+$('ex').addEventListener('change',e=>{P.ex=+e.target.value; updateExHint(); commit();});
 $('duo').addEventListener('change',e=>{P.duo=e.target.checked;scheduleFinal();});
 $('dark').addEventListener('input',e=>{P.dark=e.target.value;schedule();});
 $('light').addEventListener('input',e=>{P.light=e.target.value;schedule();});
@@ -1132,12 +1145,37 @@ window.addEventListener('paste',e=>{ for(const it of e.clipboardData.items) if(i
    先去算图再弹窗的话，用户手势已经过期，浏览器会拒绝，
    然后静默退化成普通下载——你就再也选不了文件夹了。
    导出用的就是预览那一张（同一分辨率、同一份像素），所见即所得。 */
-function encode(w,h,px){
-  const c=document.createElement('canvas'); c.width=w; c.height=h;
-  c.getContext('2d').putImageData(new ImageData(px.slice(),w,h),0,0);
+/* 导出倍数（学 Figma 的 1×/2×/3×）：只放大文件，不改变画面内容。
+   放大必须用最近邻——每个格子变成一个实心方块，不产生任何过渡色。
+   用双线性的话就等于提前把图糊掉了，正是我们要躲的东西。 */
+const MAX_EXPORT=8192;                                   // 每边上限，防止超出浏览器画布能力
+function exportScale(w,h,want){
+  return Math.max(1, Math.min(want, Math.floor(MAX_EXPORT/w), Math.floor(MAX_EXPORT/h)));
+}
+function encode(w,h,px,scale){
+  const src=document.createElement('canvas'); src.width=w; src.height=h;
+  src.getContext('2d').putImageData(new ImageData(px.slice(),w,h),0,0);
+  let out=src;
+  if(scale>1){
+    out=document.createElement('canvas');
+    out.width=w*scale; out.height=h*scale;
+    const cx=out.getContext('2d');
+    cx.imageSmoothingEnabled=false;
+    cx.drawImage(src,0,0,out.width,out.height);
+  }
   return new Promise(res=>{
-    try{ c.toBlob(b=>res(b),'image/png'); }catch(e){ res(null); }
+    try{ out.toBlob(b=>res(b),'image/png'); }catch(e){ res(null); }
   });
+}
+// 把最终会导出多大实时显示出来，省得你自己算
+function updateExHint(){
+  const el=$('exhint');
+  if(!el) return;
+  if(!lastFinal){ el.textContent='导出倍数只放大文件，不改变画面内容。'; return; }
+  const s=exportScale(lastFinal.w,lastFinal.h,P.ex);
+  el.textContent='导出尺寸 '+(lastFinal.w*s)+'×'+(lastFinal.h*s)
+    + (s<P.ex ? '（已限到 '+s+'×，再大超出画布上限）' : '')
+    + ' · 最近邻放大，只改文件大小，不改画面内容。';
 }
 function ensureFinal(){
   if(lastFinal) return Promise.resolve(lastFinal);
@@ -1149,12 +1187,14 @@ function ensureFinal(){
 }
 $('dl').addEventListener('click',async ()=>{
   if(!hasImg) return;
+  const tag = P.ex>1 ? '@'+P.ex+'x' : '';                // 文件名后缀也照 Figma 的习惯
+  const fname = lastName+'-stylized'+tag+'.png';
   let handle=null;
   if(window.showSaveFilePicker){
     try{
       handle=await showSaveFilePicker({
         id:'stylizer-export',                            // 记住上次存到哪个文件夹
-        suggestedName:lastName+'-stylized.png',
+        suggestedName:fname,
         types:[{description:'PNG 图片',accept:{'image/png':['.png']}}]
       });
     }catch(e){
@@ -1164,21 +1204,23 @@ $('dl').addEventListener('click',async ()=>{
   }
   const f=await ensureFinal();
   if(!f){ flash('还没算完，稍等一下再试'); return; }
-  const blob=await encode(f.w,f.h,f.data);
-  if(!blob){ flash('导出失败：图太大了，把分辨率调低一点'); return; }
+  const s=exportScale(f.w,f.h,P.ex);
+  const blob=await encode(f.w,f.h,f.data,s);
+  if(!blob){ flash('导出失败：图太大了，把分辨率或导出倍数调低一点'); return; }
+  const size=(f.w*s)+'×'+(f.h*s)+(s>1?' ('+s+'×)':'');
   if(handle){
     try{
       const wr=await handle.createWritable();
       await wr.write(blob); await wr.close();
-      flash('已保存 · '+f.w+'×'+f.h);
+      flash('已保存 · '+size);
       return;
     }catch(e){ /* 写入失败 → 退回下载 */ }
   }
   const url=URL.createObjectURL(blob), a=document.createElement('a');
-  a.href=url; a.download=lastName+'-stylized.png';
+  a.href=url; a.download=fname;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url),1000);
-  flash('已下载 · '+f.w+'×'+f.h);
+  flash('已下载 · '+size);
 });
 
 /* ---------- 把 P + 色卡 写回所有控件 ---------- */
@@ -1187,10 +1229,10 @@ function syncUI(){
    'pixel','levels','dstr','grain','chrom'].forEach(id=>{
     if($(id)){ $(id).value=P[id]; const o=$(id+'_v'); if(o)o.textContent=P[id]; }
   });
-  $('mode').value=P.mode; $('psrc').value=P.psrc; $('pmap').value=P.pmap;
+  $('mode').value=P.mode; $('psrc').value=P.psrc; $('pmap').value=P.pmap; $('ex').value=P.ex;
   $('duo').checked=P.duo; if(P.dark)$('dark').value=P.dark; if(P.light)$('light').value=P.light;
   $('usepal').checked=P.usePal;
-  applyMode(); renderPalette(); renderAutoPal();
+  applyMode(); renderPalette(); renderAutoPal(); updateExHint();
 }
 
 /* ---------- 内置预设 ---------- */
