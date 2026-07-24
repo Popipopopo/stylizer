@@ -26,6 +26,8 @@ A tiny client-side image degrader: dithering, palette quantization, film grain, 
 - 色卡：可增删改的调色板 + 预设 + 从图提取；抖动会把画面量化到色卡里的颜色
 - 双色调、胶片颗粒、色差
 - 预设：内置几套，也能把当前设置存成命名预设；自动记住上次的设置
+- 撤销 / 重做：`Ctrl/⌘ + Z` 撤销，`Ctrl/⌘ + Shift + Z`（或 `Ctrl + Y`）重做。拖一次滑杆算一步，不会被拆成几十步
+- 导出 PNG：Chrome / Edge 里会弹出系统保存对话框，可以自己挑文件夹；Firefox / Safari 没有这个 API，自动退回直接下载
 
 ## 技术
 
