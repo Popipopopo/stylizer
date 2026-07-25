@@ -98,6 +98,14 @@
   /* 自动色卡的只读预览 */
   .autopal{display:flex;gap:0;margin-top:10px;height:26px;border:1px solid var(--line);border-radius:3px;overflow:hidden}
   .autopal i{flex:1}
+  .mini-btn{background:#0e0e11;border:1px solid var(--line);color:var(--ink);border-radius:3px;font:400 11px var(--mono);cursor:pointer;padding:5px 10px;white-space:nowrap}
+  .mini-btn:hover{border-color:var(--brass-dim);color:var(--brass)}
+  .mini-btn.on{border-color:var(--brass);color:var(--brass);background:#16110a}
+  #fillsw{display:inline-block;width:34px;height:26px;border:1px solid var(--line);border-radius:3px;background:#888;cursor:pointer}
+  .wide-btn{width:100%;margin-top:12px;background:#0e0e11;border:1px solid var(--line);color:var(--ink);border-radius:3px;font:400 11px var(--mono);cursor:pointer;padding:7px}
+  .wide-btn:hover{border-color:var(--brass-dim);color:var(--brass)}
+  #view.brushing{cursor:crosshair}
+  #view.picking{cursor:cell}
   .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#151519;border:1px solid var(--brass-dim);
     color:var(--brass);font:400 12px var(--mono);padding:8px 16px;border-radius:3px;
     opacity:0;pointer-events:none;transition:opacity .2s;z-index:9}
@@ -240,6 +248,25 @@
       <h2>texture 质感</h2>
       <div class="row"><label>颗粒</label><input type="range" id="grain" min="0" max="80" value="14"><output id="grain_v">14</output></div>
       <div class="row"><label>色差</label><input type="range" id="chrom" min="0" max="6" value="1"><output id="chrom_v">1</output></div>
+    </div>
+
+    <div class="grp hide" data-mode="pixel">
+      <h2>retouch 修补</h2>
+      <label class="chk"><input type="checkbox" id="retouch"> 画笔涂抹（手动把杂点刷成平色）</label>
+      <div id="retouch_body" style="opacity:.4;pointer-events:none">
+        <div class="row" style="margin-top:12px">
+          <label>填充色</label>
+          <div class="swatch">
+            <button id="eyedrop" class="mini-btn" title="点一下，再到画面上点，取那个点的颜色">吸管</button>
+            <span id="fillsw" title="当前填充色，点开可手动改"></span>
+          </div>
+        </div>
+        <div class="row"><label>笔刷</label><input type="range" id="brush" min="1" max="60" value="12"><output id="brush_v">12</output></div>
+        <button id="retouch_clear" class="wide-btn">清除全部涂抹</button>
+        <p class="hint">先点「吸管」在画面上取一个色，再按住在杂点上刷。
+涂抹是盖在最后一步的，所以你之后照样能拉滑杆调整，涂抹会保留。
+换一张图会自动清空涂抹。</p>
+      </div>
     </div>
 
     <div class="grp hide" data-mode="pixel">
@@ -918,6 +945,45 @@ const P={
 
 let PAL=['#17130d','#e7dcc4'];
 let AUTOPAL=[];                                          // worker 回传的自动色卡
+
+/* ---------- 修补（画笔涂抹）----------
+   每一笔存成 {c:[r,g,b], r:归一化半径(相对宽), pts:[[nx,ny],...]}。
+   坐标全用归一化(0~1),所以改「像素块」分辨率变了也不跑偏。
+   只在像素模式生效;绑定当前这张图,换图清空。
+   合成在主线程:Worker 给的原始抖动图存 lastRaw,涂抹作为最后一步盖上去再显示。 */
+let EDITS=[];                    // 已完成的笔画
+let lastRaw=null;               // {w,h,data} 未涂抹的原始像素(像素模式)
+let brushOn=false;              // 修补模式开关
+let fillColor=[136,136,136];   // 当前填充色
+let pickPending=false;         // 吸管：下一次点画面是取色而非涂抹
+let curStroke=null;            // 正在画的这一笔
+
+// 把 EDITS 里所有笔画画到像素数组 px(w×h)上
+function applyEdits(px,w,h,edits){
+  for(const st of edits){
+    const rad=Math.max(0.5, st.r*w), r2=rad*rad, c=st.c;
+    for(const p of st.pts){
+      const cx=p[0]*w, cy=p[1]*h;
+      const x0=Math.max(0,Math.floor(cx-rad)), x1=Math.min(w-1,Math.ceil(cx+rad));
+      const y0=Math.max(0,Math.floor(cy-rad)), y1=Math.min(h-1,Math.ceil(cy+rad));
+      for(let y=y0;y<=y1;y++) for(let x=x0;x<=x1;x++){
+        const dx=x-cx, dy=y-cy;
+        if(dx*dx+dy*dy<=r2){ const i=(y*w+x)*4; px[i]=c[0]; px[i+1]=c[1]; px[i+2]=c[2]; }
+      }
+    }
+  }
+}
+// 用 lastRaw + EDITS(可选再加正在画的一笔)合成，画到 view，并更新 lastFinal
+function composite(extra){
+  if(!lastRaw) return;
+  const {w,h}=lastRaw, px=new Uint8ClampedArray(lastRaw.data);
+  applyEdits(px,w,h,EDITS);
+  if(extra) applyEdits(px,w,h,[extra]);
+  view.width=w; view.height=h;
+  vctx.putImageData(new ImageData(px,w,h),0,0);
+  view.style.width = Math.min(w*P.pixel,1200)+'px';
+  lastFinal={w:w,h:h,data:px};
+}
 const PALSETS={
   ink:['#17130d','#e7dcc4'],
   amber:['#14100a','#5c3a1e','#b07a3c','#ecdca8'],
@@ -1010,9 +1076,20 @@ function onResult(m){
   const px=new Uint8ClampedArray(m.data);
   view.width=m.w; view.height=m.h;
   view.classList.toggle('pixelated', P.mode2==='pixel');
-  vctx.putImageData(new ImageData(px,m.w,m.h),0,0);
-  view.style.width = P.mode2==='pixel' ? Math.min(m.w*P.pixel,1200)+'px' : '';
-  if(m.quality==='final'){ lastFinal={w:m.w,h:m.h,data:px}; updateExHint(); }
+  if(P.mode2==='pixel'){
+    // 存原始图，再把手动涂抹作为最后一步盖上去（涂抹因此能扛住任何滑杆重算）
+    lastRaw={w:m.w,h:m.h,data:px};
+    const out=new Uint8ClampedArray(px);
+    applyEdits(out,m.w,m.h,EDITS);
+    vctx.putImageData(new ImageData(out,m.w,m.h),0,0);
+    view.style.width = Math.min(m.w*P.pixel,1200)+'px';
+    if(m.quality==='final'){ lastFinal={w:m.w,h:m.h,data:out}; updateExHint(); }
+  }else{
+    lastRaw=null;
+    vctx.putImageData(new ImageData(px,m.w,m.h),0,0);
+    view.style.width='';
+    if(m.quality==='final'){ lastFinal={w:m.w,h:m.h,data:px}; updateExHint(); }
+  }
   if(m.auto){ AUTOPAL=m.auto.map(toHex); renderAutoPal(); }
   $('meter').innerHTML=`<b>${m.w}×${m.h}</b>  ${Math.round(m.ms)}ms  `
     + (m.quality==='draft'?'草稿':'定稿') + `  色卡 ${m.pal.length||'—'}`;
@@ -1030,6 +1107,7 @@ function loadBitmap(bmp,name){
   hasImg=true; lastName=(name||'stylized').replace(/\.[^.]+$/,'')||'stylized';
   $('stage').classList.add('has-img');
   busy=false; pending=null;
+  EDITS=[]; lastRaw=null; curStroke=null;               // 换图 → 清空涂抹（涂抹绑定具体图）
   const buf=im.data.buffer.slice(0);
   send({type:'load', w:c.width, h:c.height, data:buf}, buf);
 }
@@ -1156,6 +1234,72 @@ const drop=$('drop'), stage=$('stage');
 ['dragleave','drop'].forEach(ev=>stage.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hot');}));
 stage.addEventListener('drop',e=>loadFromFile(e.dataTransfer.files[0]));
 window.addEventListener('paste',e=>{ for(const it of e.clipboardData.items) if(it.type.startsWith('image/')) loadFromFile(it.getAsFile()); });
+
+/* ---------- 修补：画笔涂抹 + 吸管 ---------- */
+const setFillSwatch=()=>{ $('fillsw').style.background='rgb('+fillColor[0]+','+fillColor[1]+','+fillColor[2]+')'; };
+function retouchEnabled(on){
+  brushOn=on;
+  $('retouch_body').style.opacity=on?'1':'.4';
+  $('retouch_body').style.pointerEvents=on?'':'none';
+  updateCursor();
+}
+function updateCursor(){
+  view.classList.toggle('brushing', brushOn && !pickPending);
+  view.classList.toggle('picking', brushOn && pickPending);
+}
+// 屏幕坐标 → 归一化(0~1)。view 内在尺寸是工作缓冲，CSS 尺寸是放大后的显示。
+function evtToNorm(e){
+  const r=view.getBoundingClientRect();
+  let nx=(e.clientX-r.left)/r.width, ny=(e.clientY-r.top)/r.height;
+  return [Math.min(1,Math.max(0,nx)), Math.min(1,Math.max(0,ny))];
+}
+function sampleAt(nx,ny){
+  // 从画布上取——反映的是当前显示的样子（含已涂抹处），你能吸到刚刚刷上的色
+  const x=Math.min(view.width-1,Math.floor(nx*view.width)), y=Math.min(view.height-1,Math.floor(ny*view.height));
+  const d=vctx.getImageData(x,y,1,1).data;
+  return [d[0],d[1],d[2]];
+}
+$('retouch').addEventListener('change',e=>retouchEnabled(e.target.checked));
+$('brush').addEventListener('input',e=>{ $('brush_v').textContent=e.target.value; });
+$('eyedrop').addEventListener('click',()=>{ if(!brushOn)return; pickPending=true; $('eyedrop').classList.add('on'); updateCursor(); flash('在画面上点一下取色'); });
+$('fillsw').addEventListener('click',()=>{
+  const inp=document.createElement('input'); inp.type='color'; inp.value=toHex(fillColor);
+  inp.addEventListener('input',()=>{ fillColor=hex2rgb(inp.value); setFillSwatch(); });
+  inp.click();
+});
+$('retouch_clear').addEventListener('click',()=>{
+  if(!EDITS.length){ flash('没有涂抹可清除'); return; }
+  EDITS=[]; composite(); commit(); flash('已清除全部涂抹');
+});
+
+// 画笔：pointer 事件挂在 view 上；文件拖放走的是 drag 事件，两者不冲突
+view.addEventListener('pointerdown',e=>{
+  if(!brushOn || P.mode2!=='pixel' || !lastRaw) return;
+  e.preventDefault();
+  const [nx,ny]=evtToNorm(e);
+  if(pickPending){                                       // 吸管：取色，不涂
+    const c=sampleAt(nx,ny); if(c){ fillColor=c; setFillSwatch(); }
+    pickPending=false; $('eyedrop').classList.remove('on'); updateCursor();
+    flash('取色 '+toHex(fillColor)); return;
+  }
+  view.setPointerCapture(e.pointerId);
+  curStroke={c:fillColor.slice(), r:(+$('brush').value)/lastRaw.w, pts:[[nx,ny]]};
+  composite(curStroke);
+});
+view.addEventListener('pointermove',e=>{
+  if(!curStroke) return;
+  const [nx,ny]=evtToNorm(e);
+  curStroke.pts.push([nx,ny]);
+  composite(curStroke);
+});
+function endStroke(){
+  if(!curStroke) return;
+  EDITS.push(curStroke); curStroke=null;
+  composite(); commit();                                 // 一笔 = 一步历史
+}
+view.addEventListener('pointerup',endStroke);
+view.addEventListener('pointercancel',endStroke);
+setFillSwatch();
 
 /* ---------- 导出 ----------
    顺序很关键：保存对话框必须在【点击手势里立刻】发起。
@@ -1295,12 +1439,15 @@ function commit(){
   if(applying) return;
   clearTimeout(histT); histT=setTimeout(pushNow,320);
 }
+// 历史条目 = 参数快照 + 涂抹的深拷贝。涂抹只进历史，不进命名预设/localStorage。
+const cloneEdits = e => e.map(st=>({c:st.c.slice(), r:st.r, pts:st.pts.map(p=>p.slice())}));
+const histEntry = () => ({s:snapshot(), e:cloneEdits(EDITS)});
 function pushNow(){
   clearTimeout(histT); histT=null;
-  const s=snapshot();
-  if(hi>=0 && JSON.stringify(s)===JSON.stringify(hist[hi])) return;
+  const en=histEntry();
+  if(hi>=0 && JSON.stringify(en)===JSON.stringify(hist[hi])) return;
   hist.splice(hi+1);
-  hist.push(s);
+  hist.push(en);
   if(hist.length>HIST_MAX) hist.shift();
   hi=hist.length-1;
   updateHistUI();
@@ -1311,7 +1458,11 @@ function go(step){
   if(t<0||t>=hist.length) return;
   hi=t;
   applying=true;
-  try{ applyState(hist[hi]); } finally{ applying=false; }
+  try{
+    EDITS=cloneEdits(hist[hi].e);
+    applyState(hist[hi].s);                              // 触发重算，onResult 会盖上 EDITS
+    composite();                                         // 也立刻合成一次，反馈更快
+  } finally{ applying=false; }
   updateHistUI();
   flash(step<0?'已撤销':'已重做');
 }
@@ -1368,7 +1519,7 @@ $('my_presets').addEventListener('change',e=>{ const i=e.target.value; if(i!==''
       Object.assign(P,s); if(Array.isArray(pal))PAL=pal.slice(); }
   }catch(e){}
   refreshPresetList(); syncUI();
-  hist=[snapshot()]; hi=0; updateHistUI();
+  hist=[histEntry()]; hi=0; updateHistUI();
 })();
 
 /* ---------- 开局放一张演示图 ---------- */
