@@ -283,11 +283,13 @@
         <button data-pal="sick">冷绿</button>
         <button data-pal="gb">GameBoy</button>
         <button data-pal="onebit">1-bit</button>
+        <button id="pal_here">从当前图取色</button>
         <button id="pal_grab">← 收下自动色卡</button>
         <button id="pal_ref">从参考图取色…</button>
       </div>
-      <p class="hint">「从参考图取色」可以传任意一张图（电影截图、画作、老游戏截图）只借它的颜色。
-如果那张图本身颜色就少（比如 16 色的游戏截图），会原样照抄，不做近似。</p>
+      <p class="hint">「从当前图取色」就用你现在这张图吸一套色卡出来。
+「从参考图取色」则可以另传一张图（电影截图、画作、老游戏截图）只借它的颜色——
+那张图本身颜色少（比如 16 色游戏截图）时会原样照抄，不做近似。</p>
     </div>
 
     <div class="actions">
@@ -843,9 +845,13 @@ function handleRequest(msg){
     for(const k in CACHE) delete CACHE[k];
     return {msg:{type:'loaded'}};
   }
-  // 从参考图取色：只借它的颜色，不碰正在处理的主图，也不动缓存
+  // 取色：只借颜色，不碰主图、不动缓存。
+  // 带了 data 就用上传的参考图；没带就用当前正在处理的这张图（SRC）。
   if(msg.type==='sample'){
-    const ref={w:msg.w,h:msg.h,data:new Uint8ClampedArray(msg.data)};
+    let ref;
+    if(msg.data) ref={w:msg.w,h:msg.h,data:new Uint8ClampedArray(msg.data)};
+    else if(SRC) ref=SRC;
+    else return {msg:{type:'sampled', pal:null, how:'none'}};
     const exact=exactColors(ref,msg.limit);
     let pal, how;
     if(exact){ pal=exact; how='exact'; }
@@ -856,7 +862,8 @@ function handleRequest(msg){
       how='cluster';
     }
     pal.sort((a,b)=>rgb2lab(a[0],a[1],a[2])[0]-rgb2lab(b[0],b[1],b[2])[0]);
-    return {msg:{type:'sampled', pal:pal, how:how}};
+    // src：'current'=从当前图取（用图自己的颜色）；'ref'=从上传的参考图借
+    return {msg:{type:'sampled', pal:pal, how:how, src:(msg.data?'ref':'current')}};
   }
   if(!SRC) return {msg:{type:'error',id:msg.id,error:'没有已加载的图片'}};
   const t0=(typeof performance!=='undefined'?performance.now():Date.now());
@@ -985,14 +992,18 @@ function onResult(m){
     PAL=m.pal.map(toHex); renderPalette();
     if(P.mode2==='block'){
       P.psrc='custom'; $('psrc').value='custom';
-      P.pmap='rank';   $('pmap').value='rank';        // 借来的色卡默认走明暗排序
+      // 从当前图取色 → 用图自己的颜色，最近色映射（跟自动提取一个道理）；
+      // 从参考图借色 → 明暗排序，强制用满整套借来的色卡。
+      P.pmap = m.src==='current' ? 'near' : 'rank';
+      $('pmap').value=P.pmap;
     }else{
       P.usePal=true; $('usepal').checked=true;
     }
     scheduleFinal();
+    const from = m.src==='current' ? '当前图' : '参考图';
     flash(m.how==='exact'
-      ? '原样取到 '+PAL.length+' 色（这张图本来就是限色的）'
-      : '聚类取到 '+PAL.length+' 色');
+      ? '从'+from+'原样取到 '+PAL.length+' 色（本来就是限色的）'
+      : '从'+from+'取到 '+PAL.length+' 色');
     return;
   }
   busy=false;
@@ -1099,6 +1110,12 @@ $('pal_grab').addEventListener('click',()=>{
   PAL=AUTOPAL.slice(); renderPalette();
   P.psrc='custom'; $('psrc').value='custom';
   scheduleFinal(); flash('已收下 '+PAL.length+' 色，现在可以手动改了');
+});
+/* 从当前图取色：主图（SRC）已经在 Worker 里，不用重新上传，直接让它拿 SRC 吸色。 */
+$('pal_here').addEventListener('click',()=>{
+  if(!hasImg){ flash('先打开一张图'); return; }
+  flash('正在从当前图取色…');
+  send({type:'sample', n:P.pn, hw:P.hw, limit:24});   // 不带 data → Worker 用 SRC
 });
 /* 从参考图取色：只借颜色，不替换正在处理的主图。
    缩放用最近邻（imageSmoothingEnabled=false）——双线性会把相邻色混出新颜色，
