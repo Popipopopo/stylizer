@@ -29,10 +29,12 @@
   @media(max-width:820px){main{flex-direction:column}}
 
   /* ── 画布区 ── */
-  .stage{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;min-height:0;position:relative;
+  .stage{flex:1;min-width:0;min-height:0;position:relative;overflow:auto;
     background:
       radial-gradient(140% 100% at 50% 0,#141418 0,#0c0c0e 70%);}
-  #view{max-width:100%;max-height:100%;
+  .canvas-space{min-width:100%;min-height:100%;width:max-content;padding:24px;
+    display:flex;align-items:center;justify-content:center}
+  #view{display:block;flex:none;
     box-shadow:0 0 0 1px var(--line),0 24px 60px -20px #000;background:#000}
   #view.pixelated{image-rendering:pixelated}
   .drop{position:absolute;inset:24px;border:1px dashed var(--line);border-radius:4px;
@@ -44,6 +46,16 @@
   .meter{position:absolute;left:24px;bottom:24px;font:400 10px/1.5 var(--mono);color:var(--mut);
     letter-spacing:.06em;pointer-events:none;white-space:pre}
   .meter b{color:var(--brass-dim);font-weight:400}
+  .zoom-controls{position:sticky;z-index:5;left:calc(100% - 154px);bottom:18px;width:max-content;
+    display:flex;gap:4px;margin:-58px 18px 18px auto;padding:4px;border:1px solid var(--line);
+    border-radius:4px;background:#0e0e11e8;box-shadow:0 8px 24px #0009;backdrop-filter:blur(8px)}
+  .zoom-controls button{min-width:32px;height:30px;padding:0 9px;background:#0e0e11;border:1px solid var(--line);
+    border-radius:3px;color:var(--ink);font:500 13px var(--mono);cursor:pointer}
+  .zoom-controls button:hover{border-color:var(--brass-dim);color:var(--brass)}
+  .zoom-controls .zoom-value{min-width:66px;font-size:10px}
+  .brush-preview{position:fixed;z-index:20;display:none;pointer-events:none;border:1px solid #fff;
+    border-radius:50%;transform:translate(-50%,-50%);box-shadow:0 0 0 1px #000,0 0 8px #0008}
+  .brush-preview.on{display:block}
 
   /* ── 控制栏 ── */
   aside{width:308px;flex:none;border-left:1px solid var(--line);background:var(--panel);
@@ -128,13 +140,19 @@
 
 <main>
   <div class="stage" id="stage">
-    <canvas id="view" width="16" height="16"></canvas>
+    <div class="canvas-space" id="canvas_space"><canvas id="view" width="16" height="16"></canvas></div>
     <div class="drop" id="drop">
       <b>拖入一张图片</b>
       <span>或点下方「打开图片」 · 也可直接 Ctrl/⌘+V 粘贴</span>
     </div>
     <div class="meter" id="meter"></div>
+    <div class="zoom-controls" aria-label="画布缩放">
+      <button id="zoom_out" title="缩小" aria-label="缩小">−</button>
+      <button id="zoom_fit" class="zoom-value" title="适合窗口">100%</button>
+      <button id="zoom_in" title="放大" aria-label="放大">＋</button>
+    </div>
   </div>
+  <div class="brush-preview" id="brush_preview" aria-hidden="true"></div>
 
   <aside>
     <div class="grp">
@@ -957,6 +975,32 @@ let brushOn=false;              // 修补模式开关
 let fillColor=[136,136,136];   // 当前填充色
 let pickPending=false;         // 吸管：下一次点画面是取色而非涂抹
 let curStroke=null;            // 正在画的这一笔
+let zoomLevel=1;               // 1 = 当前模式下适合窗口的尺寸
+let fitScale=1;                // 画布像素 → CSS 像素（适合窗口时）
+
+function updateViewScale(){
+  if(!view.width||!view.height) return;
+  view.style.width=(view.width*fitScale*zoomLevel)+'px';
+  view.style.height=(view.height*fitScale*zoomLevel)+'px';
+  $('zoom_fit').textContent=Math.round(zoomLevel*100)+'%';
+}
+function recalcFit(){
+  if(!view.width||!view.height) return;
+  const preferred=P.mode2==='pixel' ? P.pixel : 1;
+  const aw=Math.max(1,stage.clientWidth-48), ah=Math.max(1,stage.clientHeight-48);
+  fitScale=Math.min(preferred,1200/view.width,aw/view.width,ah/view.height);
+  updateViewScale();
+}
+function setZoom(next,anchor){
+  const old=zoomLevel;
+  zoomLevel=Math.min(8,Math.max(.25,next));
+  updateViewScale();
+  if(anchor){
+    const factor=zoomLevel/old;
+    stage.scrollLeft=(stage.scrollLeft+anchor.x)*factor-anchor.x;
+    stage.scrollTop=(stage.scrollTop+anchor.y)*factor-anchor.y;
+  }
+}
 
 // 把 EDITS 里所有笔画画到像素数组 px(w×h)上
 function applyEdits(px,w,h,edits){
@@ -981,7 +1025,7 @@ function composite(extra){
   if(extra) applyEdits(px,w,h,[extra]);
   view.width=w; view.height=h;
   vctx.putImageData(new ImageData(px,w,h),0,0);
-  view.style.width = Math.min(w*P.pixel,1200)+'px';
+  recalcFit();
   lastFinal={w:w,h:h,data:px};
 }
 const PALSETS={
@@ -1082,12 +1126,12 @@ function onResult(m){
     const out=new Uint8ClampedArray(px);
     applyEdits(out,m.w,m.h,EDITS);
     vctx.putImageData(new ImageData(out,m.w,m.h),0,0);
-    view.style.width = Math.min(m.w*P.pixel,1200)+'px';
+    recalcFit();
     if(m.quality==='final'){ lastFinal={w:m.w,h:m.h,data:out}; updateExHint(); }
   }else{
     lastRaw=null;
     vctx.putImageData(new ImageData(px,m.w,m.h),0,0);
-    view.style.width='';
+    recalcFit();
     if(m.quality==='final'){ lastFinal={w:m.w,h:m.h,data:px}; updateExHint(); }
   }
   if(m.auto){ AUTOPAL=m.auto.map(toHex); renderAutoPal(); }
@@ -1246,6 +1290,7 @@ function retouchEnabled(on){
 function updateCursor(){
   view.classList.toggle('brushing', brushOn && !pickPending);
   view.classList.toggle('picking', brushOn && pickPending);
+  if(!brushOn||pickPending) $('brush_preview').classList.remove('on');
 }
 // 屏幕坐标 → 归一化(0~1)。view 内在尺寸是工作缓冲，CSS 尺寸是放大后的显示。
 function evtToNorm(e){
@@ -1260,7 +1305,7 @@ function sampleAt(nx,ny){
   return [d[0],d[1],d[2]];
 }
 $('retouch').addEventListener('change',e=>retouchEnabled(e.target.checked));
-$('brush').addEventListener('input',e=>{ $('brush_v').textContent=e.target.value; });
+$('brush').addEventListener('input',e=>{ $('brush_v').textContent=e.target.value; updateBrushPreview(lastPointerEvent); });
 $('eyedrop').addEventListener('click',()=>{ if(!brushOn)return; pickPending=true; $('eyedrop').classList.add('on'); updateCursor(); flash('在画面上点一下取色'); });
 $('fillsw').addEventListener('click',()=>{
   const inp=document.createElement('input'); inp.type='color'; inp.value=toHex(fillColor);
@@ -1273,6 +1318,22 @@ $('retouch_clear').addEventListener('click',()=>{
 });
 
 // 画笔：pointer 事件挂在 view 上；文件拖放走的是 drag 事件，两者不冲突
+let lastPointerEvent=null;
+function updateBrushPreview(e){
+  lastPointerEvent=e||lastPointerEvent;
+  const ring=$('brush_preview');
+  if(!lastPointerEvent||!brushOn||pickPending||P.mode2!=='pixel'||!lastRaw){ ring.classList.remove('on'); return; }
+  const bounds=view.getBoundingClientRect();
+  const inside=lastPointerEvent.clientX>=bounds.left&&lastPointerEvent.clientX<=bounds.right
+    &&lastPointerEvent.clientY>=bounds.top&&lastPointerEvent.clientY<=bounds.bottom;
+  if(!inside){ ring.classList.remove('on'); return; }
+  const diameter=2*(+$('brush').value)*(bounds.width/lastRaw.w);
+  ring.style.left=lastPointerEvent.clientX+'px'; ring.style.top=lastPointerEvent.clientY+'px';
+  ring.style.width=diameter+'px'; ring.style.height=diameter+'px';
+  ring.classList.add('on');
+}
+view.addEventListener('pointerenter',updateBrushPreview);
+view.addEventListener('pointerleave',()=>$('brush_preview').classList.remove('on'));
 view.addEventListener('pointerdown',e=>{
   if(!brushOn || P.mode2!=='pixel' || !lastRaw) return;
   e.preventDefault();
@@ -1287,6 +1348,7 @@ view.addEventListener('pointerdown',e=>{
   composite(curStroke);
 });
 view.addEventListener('pointermove',e=>{
+  updateBrushPreview(e);
   if(!curStroke) return;
   const [nx,ny]=evtToNorm(e);
   curStroke.pts.push([nx,ny]);
@@ -1299,6 +1361,18 @@ function endStroke(){
 }
 view.addEventListener('pointerup',endStroke);
 view.addEventListener('pointercancel',endStroke);
+stage.addEventListener('scroll',()=>updateBrushPreview(lastPointerEvent),{passive:true});
+$('zoom_out').addEventListener('click',()=>setZoom(zoomLevel/1.25));
+$('zoom_in').addEventListener('click',()=>setZoom(zoomLevel*1.25));
+$('zoom_fit').addEventListener('click',()=>setZoom(1));
+stage.addEventListener('wheel',e=>{
+  if(!(e.ctrlKey||e.metaKey)||!hasImg) return;
+  e.preventDefault();
+  const r=stage.getBoundingClientRect();
+  setZoom(zoomLevel*(e.deltaY<0?1.12:1/1.12),{x:e.clientX-r.left,y:e.clientY-r.top});
+  updateBrushPreview(e);
+},{passive:false});
+window.addEventListener('resize',recalcFit);
 setFillSwatch();
 
 /* ---------- 导出 ----------
