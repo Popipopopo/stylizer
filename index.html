@@ -129,16 +129,21 @@
   .modal-head h3{margin:0;font:600 12px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--brass)}
   .modal-head .sp{flex:1}
   .hist-grid{overflow-y:auto;padding:16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px}
-  .hist-card{border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#0e0e11;display:flex;flex-direction:column}
-  .hist-card img{width:100%;display:block;background:#000;image-rendering:pixelated;aspect-ratio:auto}
+  .hist-card{border:1px solid var(--line);border-radius:4px;overflow:hidden;background:#0e0e11;
+    display:flex;flex-direction:column;cursor:pointer;transition:border-color .12s,box-shadow .12s}
+  .hist-card:hover{border-color:var(--brass);box-shadow:0 0 0 1px var(--brass)}
+  .hist-shot{position:relative;line-height:0}
+  .hist-shot img{width:100%;display:block;background:#000;image-rendering:pixelated}
+  .hist-hint{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:#0c0c0ecc;color:var(--brass);font:600 12px var(--mono);letter-spacing:.08em;
+    opacity:0;transition:opacity .12s;pointer-events:none}
+  .hist-card:hover .hist-hint{opacity:1}
+  .hist-del{position:absolute;top:6px;right:6px;width:22px;height:22px;border-radius:3px;
+    background:#0c0c0ecc;border:1px solid var(--line);color:var(--ink);font:400 14px/1 var(--mono);
+    cursor:pointer;display:flex;align-items:center;justify-content:center;padding:0}
+  .hist-del:hover{border-color:#a5545a;color:#d98088}
   .hist-meta{padding:8px 10px;font:400 10px/1.5 var(--mono);color:var(--mut);border-top:1px solid var(--line)}
   .hist-meta b{color:var(--ink);font-weight:400}
-  .hist-row{display:flex;gap:6px;padding:8px 10px;border-top:1px solid var(--line)}
-  .hist-row button{flex:1;background:#0e0e11;border:1px solid var(--line);color:var(--ink);border-radius:3px;
-    font:400 11px var(--mono);cursor:pointer;padding:6px}
-  .hist-row button.restore:hover{border-color:var(--brass);color:var(--brass)}
-  .hist-row button.del{flex:none;color:var(--mut)}
-  .hist-row button.del:hover{border-color:#a5545a;color:#d98088}
   .hist-empty{padding:40px 18px;text-align:center;color:var(--mut);font:400 12px/1.7 var(--mono)}
   .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:#151519;border:1px solid var(--brass-dim);
     color:var(--brass);font:400 12px var(--mono);padding:8px 16px;border-radius:3px;
@@ -372,7 +377,7 @@
 <div class="modal-back" id="hist_modal">
   <div class="modal">
     <div class="modal-head">
-      <h3>导出历史</h3>
+      <h3>导出历史 · 点图即恢复</h3>
       <span class="sp"></span>
       <button id="hist_clear" class="mini-btn">清空</button>
       <button id="hist_close" class="mini-btn">关闭</button>
@@ -1548,18 +1553,25 @@ function renderHistory(){
   grid.innerHTML='';
   $('hist_empty').style.display = list.length ? 'none' : '';
   list.forEach((en,i)=>{
+    // 整张卡片可点 = 恢复设置（符合直觉，不用去找小按钮）
     const card=document.createElement('div'); card.className='hist-card';
+    card.title='点击恢复到这次导出的设置';
+    card.addEventListener('click',()=>restoreExport(i));
+
+    const shot=document.createElement('div'); shot.className='hist-shot';
     const img=document.createElement('img'); img.src=en.thumb; img.alt='导出缩略图'; img.loading='lazy';
+    const hint=document.createElement('div'); hint.className='hist-hint'; hint.textContent='点击恢复设置';
+    // 右上角删除按钮：阻止冒泡，免得误触恢复
+    const del=document.createElement('button'); del.className='hist-del'; del.textContent='×'; del.title='删除这条记录';
+    del.addEventListener('click',e=>{ e.stopPropagation(); deleteExport(i); });
+    shot.append(img,hint,del);
+
     const meta=document.createElement('div'); meta.className='hist-meta';
     const when=new Date(en.t).toLocaleString();
     const modeLabel = en.mode==='pixel' ? '像素/抖动' : '色块化';
     meta.innerHTML=`<b>${when}</b><br>${en.w}×${en.h}${en.ex>1?' · '+en.ex+'×':''} · ${modeLabel}<br>${en.name||''}`;
-    const row=document.createElement('div'); row.className='hist-row';
-    const rb=document.createElement('button'); rb.className='restore'; rb.textContent='恢复设置';
-    rb.addEventListener('click',()=>restoreExport(i));
-    const db=document.createElement('button'); db.className='del'; db.textContent='删除'; db.title='删除这条记录';
-    db.addEventListener('click',()=>deleteExport(i));
-    row.append(rb,db); card.append(img,meta,row); grid.append(card);
+
+    card.append(shot,meta); grid.append(card);
   });
 }
 function openHistory(){ renderHistory(); $('hist_modal').classList.add('on'); }
