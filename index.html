@@ -913,8 +913,13 @@ function runBlock(P,PAL,maxDim){
 }
 
 function runPixel(P,PAL,maxDim){
-  const sc=Math.min(1,maxDim/Math.max(SRC.w,SRC.h));
-  let w=Math.max(1,Math.round(SRC.w*sc/P.pixel)), h=Math.max(1,Math.round(SRC.h*sc/P.pixel));
+  // 按【高度】定尺寸(不是长边):高度锁到 maxDim/像素块,宽度随原图比例走。
+  // 这样 2× 导出的高度就固定 = maxDim×2/像素块,正好填满 Godot 的房间框,不用拉伸;
+  // 宽度无所谓(游戏里超出就左右滚)。宽度加个上限防止全景图把缓冲撑爆。
+  const sc=Math.min(1,maxDim/SRC.h);
+  let h=Math.max(1,Math.round(SRC.h*sc/P.pixel));
+  let w=Math.max(1,Math.round(SRC.w*sc/P.pixel));
+  const WMAX=2400; if(w>WMAX){ h=Math.max(1,Math.round(h*WMAX/w)); w=WMAX; }
   const img=resize(SRC,w,h);
   const d=img.data;
   grade(img,P.bri,P.con,P.warm,P.sat);
@@ -1112,9 +1117,11 @@ let reqId=0, busy=false, pending=null, lastFinal=null, draftT=0, finalT=0;
 
 function request(quality){
   if(!hasImg) return;
+  // 像素模式:maxDim 是【高度】上限(见 runPixel)。830 → 像素块=2 时高度 415，2× 导出 = 830 高，填满 824 框。
+  // 色块模式:maxDim 是长边上限(P.wr 滑杆)。
   const maxDim = quality==='draft'
-    ? Math.max(260, Math.round((P.mode2==='block'?P.wr:1000)*0.45))
-    : (P.mode2==='block'?P.wr:1000);
+    ? Math.max(260, Math.round((P.mode2==='block'?P.wr:830)*0.45))
+    : (P.mode2==='block'?P.wr:830);
   const msg={type:'render', id:++reqId, quality:quality, maxDim:maxDim,
              P:JSON.parse(JSON.stringify(P)),
              PAL:P.mode2==='block' ? PAL.map(hex2rgb) : PAL.map(hex2rgb)};
