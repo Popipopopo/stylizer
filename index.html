@@ -348,6 +348,7 @@
     <div class="grp">
       <h2>色卡 palette</h2>
       <label class="chk" id="usepal_row"><input type="checkbox" id="usepal"> 启用色卡（把画面量化到这些颜色）</label>
+      <div class="row" id="grab_n_row"><label>取色数</label><input type="range" id="pn2" min="2" max="24" step="1" value="8"><output id="pn2_v">8</output></div>
       <div class="pal" id="pal_list" style="margin-top:12px"></div>
       <div class="palrow">
         <button data-pal="ink">纸与墨</button>
@@ -941,7 +942,20 @@ function handleRequest(msg){
   if(msg.type==='sample'){
     let ref;
     if(msg.data) ref={w:msg.w,h:msg.h,data:new Uint8ClampedArray(msg.data)};
-    else if(SRC) ref=SRC;
+    else if(SRC){
+      // 从当前图取色:必须用【调色之后】的画面,不能用原始照片。
+      // 否则你把画面调冷了、调淡了,取色器却还在看那张原始的暖照片,
+      // 给回来的色卡和屏幕上的样子完全不是一个调子(实测:冷灰画面取出一套棕色卡)。
+      const bri=msg.bri||0, con=msg.con||0, warm=msg.warm||0, sat=(msg.sat==null?100:msg.sat);
+      if(bri===0&&con===0&&warm===0&&sat===100){
+        ref=SRC;                                          // 没调过色 → 用原图（保住少色图“原样照抄”那条路）
+      }else{
+        const sc=Math.min(1,320/Math.max(SRC.w,SRC.h));
+        const small=resize(SRC,Math.max(1,Math.round(SRC.w*sc)),Math.max(1,Math.round(SRC.h*sc)));
+        grade(small,bri,con,warm,sat);
+        ref=small;
+      }
+    }
     else return {msg:{type:'sampled', pal:null, how:'none'}};
     const exact=exactColors(ref,msg.limit);
     let pal, how;
@@ -1224,9 +1238,17 @@ const bindRange=(id,key)=>{
 ['bri','con','warm','sat','kr','ks','kp','pn','hw','ma','cr','cp','tx','ts','tg','wr',
  'pixel','levels','dstr','grain','chrom'].forEach(id=>bindRange(id,id));
 
+// 色块模式的「色数」滑杆动了 → 同步下面那个「取色数」
+$('pn').addEventListener('input',()=>{ $('pn2').value=P.pn; $('pn2_v').textContent=P.pn; });
 $('mode').addEventListener('change',e=>{P.mode=e.target.value;scheduleFinal();});
 $('psrc').addEventListener('change',e=>{P.psrc=e.target.value;scheduleFinal();});
 $('pmap').addEventListener('change',e=>{P.pmap=e.target.value;scheduleFinal();});
+// 取色数：和色块模式的「色数」是同一个值，两个控件互相同步（像素模式下那个是隐藏的）
+$('pn2').addEventListener('input',e=>{
+  P.pn=+e.target.value; $('pn2_v').textContent=e.target.value;
+  if($('pn')){ $('pn').value=P.pn; const o=$('pn_v'); if(o)o.textContent=P.pn; }
+  if(P.mode2==='block') schedule(); else commit();
+});
 // 导出倍数不影响预览，所以不用重渲染，只更新提示 + 记一条历史
 $('ex').addEventListener('change',e=>{P.ex=+e.target.value; updateExHint(); commit();});
 $('duo').addEventListener('change',e=>{P.duo=e.target.checked;scheduleFinal();});
@@ -1285,7 +1307,9 @@ $('pal_grab').addEventListener('click',()=>{
 $('pal_here').addEventListener('click',()=>{
   if(!hasImg){ flash('先打开一张图'); return; }
   flash('正在从当前图取色…');
-  send({type:'sample', n:P.pn, hw:P.hw, limit:24});   // 不带 data → Worker 用 SRC
+  // 不带 data → Worker 用当前图；带上调色参数，让取色看到的是【你屏幕上的样子】
+  send({type:'sample', n:P.pn, hw:P.hw, limit:24,
+        bri:P.bri, con:P.con, warm:P.warm, sat:P.sat});
 });
 /* 从参考图取色：只借颜色，不替换正在处理的主图。
    缩放用最近邻（imageSmoothingEnabled=false）——双线性会把相邻色混出新颜色，
@@ -1601,6 +1625,7 @@ function syncUI(){
     if($(id)){ $(id).value=P[id]; const o=$(id+'_v'); if(o)o.textContent=P[id]; }
   });
   $('mode').value=P.mode; $('psrc').value=P.psrc; $('pmap').value=P.pmap; $('ex').value=P.ex;
+  $('pn2').value=P.pn; $('pn2_v').textContent=P.pn;
   $('duo').checked=P.duo; if(P.dark)$('dark').value=P.dark; if(P.light)$('light').value=P.light;
   $('usepal').checked=P.usePal;
   applyMode(); renderPalette(); renderAutoPal(); updateExHint();
